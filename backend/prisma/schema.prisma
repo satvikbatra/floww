@@ -1,0 +1,208 @@
+// This is your Prisma schema file
+// Migrated from Python SQLAlchemy models
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============== User & Auth ==============
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPERUSER
+}
+
+model User {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  username        String   @unique
+  hashedPassword  String   @map("hashed_password")
+  fullName        String?  @map("full_name")
+  role            UserRole @default(USER)
+  isActive        Boolean  @default(true) @map("is_active")
+  isSuperuser     Boolean  @default(false) @map("is_superuser")
+  avatarUrl       String?  @map("avatar_url")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  projects  Project[]
+  apiKeys   ApiKey[]
+  documents Document[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  name      String
+  keyHash   String    @unique @map("key_hash")
+  prefix    String
+  expiresAt DateTime? @map("expires_at")
+  lastUsed  DateTime? @map("last_used")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+// ============== Projects ==============
+
+model Project {
+  id          String   @id @default(uuid())
+  ownerId     String   @map("owner_id")
+  name        String
+  description String?
+  baseUrl     String   @map("base_url")
+  config      Json     @default("{}")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  crawlSessions CrawlSession[]
+  documents     Document[]
+  snapshots     Snapshot[]
+
+  @@map("projects")
+}
+
+// ============== Crawling ==============
+
+enum CrawlStatus {
+  PENDING
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model CrawlSession {
+  id           String      @id @default(uuid())
+  projectId    String      @map("project_id")
+  status       CrawlStatus @default(PENDING)
+  pagesVisited Int         @default(0) @map("pages_visited")
+  pagesTotal   Int         @default(100) @map("pages_total")
+  errorsCount  Int         @default(0) @map("errors_count")
+  startedAt    DateTime?   @map("started_at")
+  completedAt  DateTime?   @map("completed_at")
+  lastError    String?     @map("last_error")
+  stateData    Json        @default("{}") @map("state_data")
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("crawl_sessions")
+}
+
+// ============== Archive Snapshots ==============
+
+enum SnapshotType {
+  FULL
+  DOM
+  SCREENSHOT
+  INTERACTION
+}
+
+model Snapshot {
+  id             String       @id @default(uuid())
+  projectId      String       @map("project_id")
+  crawlSessionId String?      @map("crawl_session_id")
+  pageUrl        String       @map("page_url")
+  pageUrlHash    String       @map("page_url_hash")
+  pageTitle      String       @map("page_title")
+  snapshotType   SnapshotType @default(FULL) @map("snapshot_type")
+  capturedAt     DateTime     @default(now()) @map("captured_at")
+  
+  // Storage paths
+  htmlPath       String?      @map("html_path")
+  screenshotPath String?      @map("screenshot_path")
+  resourcesDir   String?      @map("resources_dir")
+  
+  // Hashes
+  contentHash    String       @map("content_hash")
+  visualHash     String?      @map("visual_hash")
+  
+  // Metadata
+  httpStatus     Int          @default(200) @map("http_status")
+  loadTimeMs     Int          @default(0) @map("load_time_ms")
+  resourceCount  Int          @default(0) @map("resource_count")
+  totalSizeBytes BigInt       @default(0) @map("total_size_bytes")
+  
+  // Diff tracking
+  previousSnapshotId String?  @map("previous_snapshot_id")
+  diffSummary        Json?    @map("diff_summary")
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([pageUrlHash])
+  @@index([projectId, capturedAt])
+  @@map("snapshots")
+}
+
+// ============== Documents ==============
+
+enum OutputFormat {
+  MARKDOWN
+  HTML
+  PDF
+  JSON
+}
+
+enum DocumentStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+model Document {
+  id             String         @id @default(uuid())
+  projectId      String         @map("project_id")
+  userId         String         @map("user_id")
+  crawlSessionId String?        @map("crawl_session_id")
+  title          String
+  description    String?
+  format         OutputFormat   @default(MARKDOWN)
+  status         DocumentStatus @default(PENDING)
+  outputPath     String?        @map("output_path")
+  size           Int            @default(0)
+  generatedAt    DateTime?      @map("generated_at")
+  error          String?
+  metadata       Json           @default("{}")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("documents")
+}
+
+// ============== Webhooks (Future) ==============
+
+model Webhook {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  url       String
+  events    String[] // Array of event types
+  secret    String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("webhooks")
+}

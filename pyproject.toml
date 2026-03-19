@@ -1,0 +1,167 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "floww"
+version = "0.1.0"
+description = "Autonomous SaaS Documentation Generator - AI-powered system that explores web apps and generates end-user documentation"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Floww Team", email = "team@floww.dev"}
+]
+keywords = [
+    "documentation",
+    "saaS",
+    "automation",
+    "ai",
+    "playwright",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Testing",
+]
+
+dependencies = [
+    # Browser Automation
+    "playwright>=1.40.0",
+    
+    # Web Framework
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    
+    # Data Validation & Models
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    
+    # Database
+    "sqlalchemy>=2.0.0",
+    "aiosqlite>=0.19.0",
+    
+    # LLM Providers
+    "openai>=1.12.0",
+    "anthropic>=0.18.0",
+    "google-generativeai>=0.3.0",
+    
+    # HTTP Client
+    "httpx>=0.26.0",
+    "aiohttp>=3.9.0",
+    
+    # Templates & Documentation
+    "jinja2>=3.1.0",
+    "markdown>=3.5.0",
+    "weasyprint>=60.0",
+    "python-docx>=1.1.0",
+    
+    # Image Processing
+    "pillow>=10.0.0",
+    
+    # CLI
+    "click>=8.1.0",
+    "rich>=13.7.0",
+    
+    # Configuration
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    
+    # Async & Task Queue
+    "asyncio-pool>=0.6.0",
+    
+    # Utilities
+    "python-multipart>=0.0.6",
+    "tenacity>=8.2.0",
+    "structlog>=24.1.0",
+    # Auth
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "email-validator>=2.1.0",
+    
+    # Monitoring
+    "prometheus-client>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
+redis = [
+    "redis>=5.0.0",
+]
+postgres = [
+    "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9.0",
+]
+
+[project.scripts]
+floww = "floww.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/juspay/floww"
+Documentation = "https://github.com/juspay/floww#readme"
+Repository = "https://github.com/juspay/floww"
+Issues = "https://github.com/juspay/floww/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/floww"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "B905",   # zip without explicit strict
+]
+
+[tool.ruff.isort]
+known-first-party = ["floww"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src/floww"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
