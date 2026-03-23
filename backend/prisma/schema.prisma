@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
 }
 
 // ============== User & Auth ==============
@@ -141,6 +141,9 @@ model Snapshot {
   resourceCount  Int          @default(0) @map("resource_count")
   totalSizeBytes BigInt       @default(0) @map("total_size_bytes")
   
+  // AI Analysis
+  analysisJson       Json?    @map("analysis_json")
+
   // Diff tracking
   previousSnapshotId String?  @map("previous_snapshot_id")
   diffSummary        Json?    @map("diff_summary")

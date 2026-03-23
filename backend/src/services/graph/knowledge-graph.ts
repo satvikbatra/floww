@@ -121,7 +121,7 @@ export class KnowledgeGraph {
     title: string
     links: Array<{ href: string; text: string }>
     forms: Array<{ action: string; method: string }>
-    buttons: Array<{ text: string; type: string }>
+    buttons: Array<{ text: string; type: string | null }>
   }) {
     // Add page node
     const pageId = `page:${pageData.url}`
@@ -256,21 +256,162 @@ export class KnowledgeGraph {
   }
 
   /**
-   * Detect workflows (common user paths)
+   * Resolve all pending edges after crawl completes.
+   * Links/forms may have been created before their target pages were crawled.
    */
-  detectWorkflows(): Array<{ name: string; steps: string[] }> {
-    // Simplified workflow detection
-    // In production, use more sophisticated graph algorithms
-    const workflows: Array<{ name: string; steps: string[] }> = []
+  resolveEdges(): number {
+    let edgesAdded = 0
 
-    // Find pages with high degree centrality (hub pages)
+    this.graph.forEachNode((nodeId, attrs) => {
+      if (attrs.type !== NodeType.ELEMENT) return
+
+      // Resolve NAVIGATES_TO edges for links
+      if (attrs.elementType === 'link' && attrs.action) {
+        const targetPageId = `page:${attrs.action}`
+        if (this.graph.hasNode(targetPageId)) {
+          const hasEdge = this.graph.edges(nodeId).some(edge => {
+            const edgeAttrs = this.graph.getEdgeAttributes(edge)
+            return this.graph.target(edge) === targetPageId && edgeAttrs.type === EdgeType.NAVIGATES_TO
+          })
+          if (!hasEdge) {
+            try {
+              this.addEdge(nodeId, targetPageId, EdgeType.NAVIGATES_TO)
+              edgesAdded++
+            } catch {}
+          }
+        }
+      }
+
+      // Resolve SUBMITS_TO edges for forms
+      if (attrs.elementType === 'form' && attrs.action) {
+        const targetId = `page:${attrs.action}`
+        if (this.graph.hasNode(targetId)) {
+          const hasEdge = this.graph.edges(nodeId).some(edge => {
+            const edgeAttrs = this.graph.getEdgeAttributes(edge)
+            return this.graph.target(edge) === targetId && edgeAttrs.type === EdgeType.SUBMITS_TO
+          })
+          if (!hasEdge) {
+            try {
+              this.addEdge(nodeId, targetId, EdgeType.SUBMITS_TO)
+              edgesAdded++
+            } catch {}
+          }
+        }
+      }
+    })
+
+    return edgesAdded
+  }
+
+  /**
+   * Detect workflows using graph path analysis
+   */
+  detectWorkflows(): Array<{ name: string; description: string; steps: Array<{ page: string; action: string }> }> {
+    const workflows: Array<{ name: string; description: string; steps: Array<{ page: string; action: string }> }> = []
     const pages = this.findPages('')
+    const visited = new Set<string>()
+
+    // Strategy 1: Find form submission chains
     for (const page of pages) {
-      const outgoingLinks = this.graph.outDegree(page.id)
-      if (outgoingLinks > 3) {
+      const formEdges = this.getEdgesByType(EdgeType.SUBMITS_TO)
+        .filter(e => {
+          // Find forms that belong to this page
+          const sourceNode = this.getNode(e.source)
+          if (!sourceNode || (sourceNode as ElementNode).elementType !== 'form') return false
+          // Check if form's parent page is this page
+          return this.graph.edges(page.id).some(edge =>
+            this.graph.target(edge) === e.source
+          )
+        })
+
+      if (formEdges.length > 0) {
+        for (const formEdge of formEdges) {
+          const targetPage = this.getNode(formEdge.target) as PageNode | null
+          if (targetPage && !visited.has(`form:${page.id}:${formEdge.target}`)) {
+            visited.add(`form:${page.id}:${formEdge.target}`)
+            workflows.push({
+              name: `${page.title} Form Submission`,
+              description: `Submit form on "${page.title}" page`,
+              steps: [
+                { page: page.title, action: `Navigate to ${page.title}` },
+                { page: page.title, action: 'Fill in form fields' },
+                { page: page.title, action: 'Submit form' },
+                { page: targetPage.title, action: `Redirected to ${targetPage.title}` },
+              ],
+            })
+          }
+        }
+      }
+    }
+
+    // Strategy 2: Find linear navigation paths (pages grouped by URL prefix)
+    const urlGroups = new Map<string, PageNode[]>()
+    for (const page of pages) {
+      try {
+        const url = new URL(page.url)
+        const segments = url.pathname.split('/').filter(Boolean)
+        if (segments.length >= 2) {
+          const prefix = '/' + segments[0]
+          if (!urlGroups.has(prefix)) urlGroups.set(prefix, [])
+          urlGroups.get(prefix)!.push(page)
+        }
+      } catch {}
+    }
+
+    for (const [prefix, groupPages] of urlGroups) {
+      if (groupPages.length >= 2 && groupPages.length <= 10) {
+        // Sort by URL depth
+        const sorted = groupPages.sort((a, b) => {
+          const aDepth = new URL(a.url).pathname.split('/').length
+          const bDepth = new URL(b.url).pathname.split('/').length
+          return aDepth - bDepth
+        })
+
+        const name = prefix.slice(1).charAt(0).toUpperCase() + prefix.slice(2)
         workflows.push({
-          name: `Workflow from ${page.title}`,
-          steps: [page.id],
+          name: `${name} Management`,
+          description: `Pages under ${prefix} path`,
+          steps: sorted.map((p, i) => ({
+            page: p.title,
+            action: i === 0 ? `Navigate to ${p.title}` : `Go to ${p.title}`,
+          })),
+        })
+      }
+    }
+
+    // Strategy 3: Find hub pages (pages with many outgoing links to other pages)
+    for (const page of pages) {
+      if (visited.has(`hub:${page.id}`)) continue
+
+      // Find direct page-to-page navigation via link elements
+      const linkedPages: PageNode[] = []
+      const outNeighbors = this.graph.outNeighbors(page.id)
+      for (const neighborId of outNeighbors) {
+        const neighbor = this.getNode(neighborId)
+        if (neighbor && (neighbor as ElementNode).elementType === 'link') {
+          // Find where this link goes
+          const linkTargets = this.graph.outNeighbors(neighborId)
+          for (const targetId of linkTargets) {
+            const target = this.getNode(targetId)
+            if (target && (target as any).type === NodeType.PAGE) {
+              linkedPages.push(target as PageNode)
+            }
+          }
+        }
+      }
+
+      if (linkedPages.length >= 3 && linkedPages.length <= 8) {
+        visited.add(`hub:${page.id}`)
+        workflows.push({
+          name: `Navigation from ${page.title}`,
+          description: `${page.title} links to ${linkedPages.length} pages`,
+          steps: [
+            { page: page.title, action: `Start at ${page.title}` },
+            ...linkedPages.slice(0, 6).map(p => ({
+              page: p.title,
+              action: `Navigate to ${p.title}`,
+            })),
+          ],
         })
       }
     }

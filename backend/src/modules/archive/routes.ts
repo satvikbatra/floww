@@ -9,7 +9,7 @@ const archive = new Hono()
 // Get snapshots for a project
 archive.get('/:projectId/archive/snapshots', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
   const url = c.req.query('url')
 
   // Verify project
@@ -38,8 +38,8 @@ archive.get('/:projectId/archive/snapshots', requireAuth, async (c) => {
 // Get single snapshot
 archive.get('/:projectId/archive/snapshots/:snapshotId', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
-  const snapshotId = c.req.param('snapshotId')
+  const projectId = c.req.param('projectId')!
+  const snapshotId = c.req.param('snapshotId')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -71,8 +71,8 @@ archive.get('/:projectId/archive/snapshots/:snapshotId', requireAuth, async (c) 
 // Get timeline for a specific URL
 archive.get('/:projectId/archive/timeline/:urlHash', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
-  const urlHash = c.req.param('urlHash')
+  const projectId = c.req.param('projectId')!
+  const urlHash = c.req.param('urlHash')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -107,7 +107,7 @@ archive.get('/:projectId/archive/timeline/:urlHash', requireAuth, async (c) => {
 // Compare two snapshots
 archive.post('/:projectId/archive/compare', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
   const body = await c.req.json()
   const { snapshotAId, snapshotBId } = body
 
@@ -161,7 +161,7 @@ archive.post('/:projectId/archive/compare', requireAuth, async (c) => {
 // Get archive stats
 archive.get('/:projectId/archive/stats', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
 
   // Verify project
   const project = await db.project.findFirst({

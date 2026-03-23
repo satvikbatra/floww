@@ -46,7 +46,7 @@ export const InteractiveCrawlDialog: React.FC<InteractiveCrawlDialogProps> = ({
 
   // WebSocket connection
   useEffect(() => {
-    const ws = new WebSocket(`ws://localhost:8080/api/v1/ws/crawl/${sessionId}`)
+    const ws = new WebSocket(`ws://localhost:8000/api/v1/ws/crawl/${sessionId}`)
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)

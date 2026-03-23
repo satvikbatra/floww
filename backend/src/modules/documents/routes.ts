@@ -5,30 +5,25 @@ import { NotFoundError } from '../../utils/errors'
 import { validate, generateDocumentSchema } from '../../types/schemas'
 import { graphManager } from '../../services/graph/knowledge-graph'
 import { documentGenerator } from '../../services/documents/generator'
-import path from 'path'
+import { promises as fs } from 'fs'
 
 const documents = new Hono()
 
 // Generate documentation
 documents.post('/:projectId/documents', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
   const body = await c.req.json()
   const data = validate(generateDocumentSchema, body)
 
-  // Verify project
   const project = await db.project.findFirst({
-    where: {
-      id: projectId,
-      ownerId: user.id,
-    },
+    where: { id: projectId, ownerId: user.id },
   })
 
   if (!project) {
     throw new NotFoundError('Project not found')
   }
 
-  // Create document record
   const doc = await db.document.create({
     data: {
       projectId,
@@ -44,39 +39,30 @@ documents.post('/:projectId/documents', requireAuth, async (c) => {
   // Generate documentation in background
   ;(async () => {
     try {
-      // Get knowledge graph
       const kg = await graphManager.getGraph(projectId)
 
-      // Generate markdown
-      const markdown = await documentGenerator.generateMarkdown(
-        project.name,
-        project.baseUrl,
-        kg
-      )
+      const result = await documentGenerator.generateFullDocumentation(kg, {
+        projectId,
+        projectName: project.name,
+        projectUrl: project.baseUrl,
+        crawlSessionId: data.crawlSessionId || undefined,
+        format: data.format as 'MARKDOWN' | 'HTML',
+        includeScreenshots: (data as any).includeScreenshots !== false,
+        includeAiAnalysis: (data as any).includeAiAnalysis !== false,
+        language: (data as any).language || 'en',
+      })
 
-      let content = markdown
-      let filename = `${doc.id}.md`
-
-      // Convert to other formats if needed
-      if (data.format === 'HTML') {
-        content = await documentGenerator.generateHTML(markdown)
-        filename = `${doc.id}.html`
-      }
-
-      // Save to disk
-      const outputPath = await documentGenerator.save(content, projectId, filename)
-
-      // Update document record
       await db.document.update({
         where: { id: doc.id },
         data: {
           status: 'COMPLETED',
-          outputPath,
-          size: content.length,
+          outputPath: result.outputPath,
+          size: Buffer.byteLength(result.content, 'utf-8'),
           generatedAt: new Date(),
         },
       })
     } catch (error) {
+      console.error('Document generation failed:', error)
       await db.document.update({
         where: { id: doc.id },
         data: {
@@ -93,14 +79,10 @@ documents.post('/:projectId/documents', requireAuth, async (c) => {
 // List documents
 documents.get('/:projectId/documents', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
 
-  // Verify project
   const project = await db.project.findFirst({
-    where: {
-      id: projectId,
-      ownerId: user.id,
-    },
+    where: { id: projectId, ownerId: user.id },
   })
 
   if (!project) {
@@ -112,75 +94,82 @@ documents.get('/:projectId/documents', requireAuth, async (c) => {
     orderBy: { createdAt: 'desc' },
   })
 
-  return c.json({
-    documents: docs,
-    total: docs.length,
-  })
+  return c.json({ documents: docs, total: docs.length })
 })
 
-// Get single document
+// Get single document metadata
 documents.get('/:projectId/documents/:documentId', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
-  const documentId = c.req.param('documentId')
+  const projectId = c.req.param('projectId')!
+  const documentId = c.req.param('documentId')!
 
-  // Verify project
   const project = await db.project.findFirst({
-    where: {
-      id: projectId,
-      ownerId: user.id,
-    },
+    where: { id: projectId, ownerId: user.id },
   })
-
-  if (!project) {
-    throw new NotFoundError('Project not found')
-  }
+  if (!project) throw new NotFoundError('Project not found')
 
   const doc = await db.document.findFirst({
-    where: {
-      id: documentId,
-      projectId,
-    },
+    where: { id: documentId, projectId },
   })
-
-  if (!doc) {
-    throw new NotFoundError('Document not found')
-  }
+  if (!doc) throw new NotFoundError('Document not found')
 
   return c.json(doc)
+})
+
+// Download document content
+documents.get('/:projectId/documents/:documentId/content', requireAuth, async (c) => {
+  const user = c.get('user')
+  const projectId = c.req.param('projectId')!
+  const documentId = c.req.param('documentId')!
+
+  const project = await db.project.findFirst({
+    where: { id: projectId, ownerId: user.id },
+  })
+  if (!project) throw new NotFoundError('Project not found')
+
+  const doc = await db.document.findFirst({
+    where: { id: documentId, projectId },
+  })
+  if (!doc || !doc.outputPath) throw new NotFoundError('Document not found or not generated yet')
+
+  try {
+    const content = await fs.readFile(doc.outputPath, 'utf-8')
+    const contentType = doc.format === 'HTML' ? 'text/html'
+      : doc.format === 'JSON' ? 'application/json'
+      : 'text/markdown'
+
+    return new Response(content, {
+      headers: {
+        'Content-Type': `${contentType}; charset=utf-8`,
+        'Content-Disposition': `attachment; filename="${doc.title}.${doc.format === 'HTML' ? 'html' : 'md'}"`,
+      },
+    })
+  } catch {
+    throw new NotFoundError('Document file not found on disk')
+  }
 })
 
 // Delete document
 documents.delete('/:projectId/documents/:documentId', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
-  const documentId = c.req.param('documentId')
+  const projectId = c.req.param('projectId')!
+  const documentId = c.req.param('documentId')!
 
-  // Verify project
   const project = await db.project.findFirst({
-    where: {
-      id: projectId,
-      ownerId: user.id,
-    },
+    where: { id: projectId, ownerId: user.id },
   })
-
-  if (!project) {
-    throw new NotFoundError('Project not found')
-  }
+  if (!project) throw new NotFoundError('Project not found')
 
   const doc = await db.document.findFirst({
-    where: {
-      id: documentId,
-      projectId,
-    },
+    where: { id: documentId, projectId },
   })
+  if (!doc) throw new NotFoundError('Document not found')
 
-  if (!doc) {
-    throw new NotFoundError('Document not found')
+  if (doc.outputPath) {
+    try { await fs.unlink(doc.outputPath) } catch {}
   }
 
   await db.document.delete({ where: { id: documentId } })
-
   return c.json({ message: 'Document deleted' })
 })
 

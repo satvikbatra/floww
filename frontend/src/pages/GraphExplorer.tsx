@@ -88,7 +88,7 @@ const GraphExplorer: React.FC<GraphExplorerProps> = ({ projectId: propProjectId 
       }
     }
 
-    networkInstance.current = new Network(networkRef.current, { nodes, edges }, options)
+    networkInstance.current = new Network(networkRef.current, { nodes: nodes as any, edges: edges as any }, options as any)
 
     return () => {
       networkInstance.current?.destroy()

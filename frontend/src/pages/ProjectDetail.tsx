@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Play, Pause, RotateCcw, FileText, BarChart3 } from 'lucide-react'
-import { getProject, getCrawlSessions, startCrawl } from '../hooks/useApi'
+import { Play, FileText, BarChart3, RotateCcw, BookOpen } from 'lucide-react'
+import { getProject, getCrawlSessions, startCrawl, sendCrawlAction } from '../hooks/useApi'
 import { InteractiveCrawlBanner } from '../components/InteractiveCrawlBanner'
+import { DocumentsPanel } from '../components/DocumentsPanel'
 import GraphExplorer from './GraphExplorer'
 import type { Project, CrawlSession } from '../types'
 
@@ -11,23 +12,73 @@ const ProjectDetail: React.FC = () => {
   const [project, setProject] = useState<Project | null>(null)
   const [sessions, setSessions] = useState<CrawlSession[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overview' | 'graph' | 'sessions'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'graph' | 'sessions' | 'documents'>('overview')
   const [activeCrawlSessionId, setActiveCrawlSessionId] = useState<string | null>(null)
+  const [crawlProgress, setCrawlProgress] = useState<{
+    pagesVisited: number
+    pagesTotal: number
+    currentUrl: string
+    status: string
+  } | null>(null)
 
   useEffect(() => {
     if (id) loadData()
   }, [id])
 
+  // WebSocket for real-time crawl progress
+  useEffect(() => {
+    if (!activeCrawlSessionId) {
+      setCrawlProgress(null)
+      return
+    }
+
+    const wsUrl = `ws://localhost:8000/api/v1/ws/crawl/${activeCrawlSessionId}`
+    let ws: WebSocket | null = null
+
+    try {
+      ws = new WebSocket(wsUrl)
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        if (data.type === 'crawl:progress') {
+          setCrawlProgress(data.data)
+        }
+        if (data.type === 'crawl:completed' || data.type === 'crawl:failed') {
+          setCrawlProgress(null)
+          setActiveCrawlSessionId(null)
+          loadData()
+        }
+      }
+
+      ws.onerror = () => {
+        // WS not available, fall back to polling
+      }
+    } catch {
+      // WS connection failed, not critical
+    }
+
+    return () => {
+      ws?.close()
+    }
+  }, [activeCrawlSessionId])
+
   const loadData = async () => {
     if (!id) return
-    
+
     try {
       const [projectRes, sessionsRes] = await Promise.all([
         getProject(id),
         getCrawlSessions(id)
       ])
       setProject(projectRes.data)
-      setSessions(sessionsRes.data.sessions || [])
+      const sessionsList = sessionsRes.data.sessions || []
+      setSessions(sessionsList)
+
+      // Check if there's an active crawl
+      const running = sessionsList.find((s: CrawlSession) => s.status === 'RUNNING')
+      if (running) {
+        setActiveCrawlSessionId(running.id)
+      }
     } catch (error) {
       console.error('Failed to load project:', error)
     } finally {
@@ -37,68 +88,28 @@ const ProjectDetail: React.FC = () => {
 
   const handleStartCrawl = async () => {
     if (!id) return
-    
+
     try {
       const response = await startCrawl(id)
-      setActiveCrawlSessionId(response.data?.session_id || null)
+      const sessionId = response.data?.id || response.data?.session_id
+      setActiveCrawlSessionId(sessionId || null)
       loadData()
     } catch (error) {
       console.error('Failed to start crawl:', error)
     }
   }
 
-  const handleContinueCrawl = async () => {
-    if (!activeCrawlSessionId) return
-    
-    try {
-      await fetch(`http://localhost:8080/api/v1/crawl/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: activeCrawlSessionId,
-          action: 'continue'
-        })
-      })
-      console.log('Continue action sent')
-    } catch (error) {
-      console.error('Failed to send continue action:', error)
-    }
-  }
+  const handleCrawlAction = async (action: string) => {
+    if (!activeCrawlSessionId || !id) return
 
-  const handleSkipPage = async () => {
-    if (!activeCrawlSessionId) return
-    
     try {
-      await fetch(`http://localhost:8080/api/v1/crawl/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: activeCrawlSessionId,
-          action: 'skip'
-        })
-      })
-      console.log('Skip action sent')
+      await sendCrawlAction(id, activeCrawlSessionId, action)
+      if (action === 'cancel') {
+        setActiveCrawlSessionId(null)
+        setCrawlProgress(null)
+      }
     } catch (error) {
-      console.error('Failed to send skip action:', error)
-    }
-  }
-
-  const handleStopCrawl = async () => {
-    if (!activeCrawlSessionId) return
-    
-    try {
-      await fetch(`http://localhost:8080/api/v1/crawl/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: activeCrawlSessionId,
-          action: 'cancel'
-        })
-      })
-      setActiveCrawlSessionId(null)
-      console.log('Stop action sent')
-    } catch (error) {
-      console.error('Failed to send stop action:', error)
+      console.error(`Failed to send ${action} action:`, error)
     }
   }
 
@@ -114,15 +125,18 @@ const ProjectDetail: React.FC = () => {
     return <div className="card p-8 text-center">Project not found</div>
   }
 
+  const latestSession = sessions[0]
+  const totalPages = sessions.reduce((sum, s) => sum + (s.pages_visited || 0), 0)
+
   return (
     <div>
-      {/* Interactive Crawl Banner - shows when waiting for user input */}
+      {/* Interactive Crawl Banner */}
       {activeCrawlSessionId && (
         <InteractiveCrawlBanner
           sessionId={activeCrawlSessionId}
-          onContinue={handleContinueCrawl}
-          onSkip={handleSkipPage}
-          onStop={handleStopCrawl}
+          onContinue={() => handleCrawlAction('continue')}
+          onSkip={() => handleCrawlAction('skip')}
+          onStop={() => handleCrawlAction('cancel')}
         />
       )}
 
@@ -135,36 +149,65 @@ const ProjectDetail: React.FC = () => {
             </p>
           </div>
           <div className="flex gap-2">
-            <button onClick={handleStartCrawl} className="btn btn-primary">
+            <button
+              onClick={handleStartCrawl}
+              className="btn btn-primary"
+              disabled={!!activeCrawlSessionId}
+            >
               <Play size={18} />
-              Start Crawl
+              {activeCrawlSessionId ? 'Crawling...' : 'Start Crawl'}
             </button>
           </div>
         </div>
       </div>
 
+      {/* Crawl Progress Bar */}
+      {crawlProgress && (
+        <div className="card mb-4" style={{ padding: '12px 16px' }}>
+          <div className="flex justify-between items-center mb-2">
+            <span style={{ fontSize: '14px', fontWeight: 600 }}>
+              Crawling: {crawlProgress.pagesVisited} / {crawlProgress.pagesTotal} pages
+            </span>
+            <span style={{ fontSize: '12px', opacity: 0.7 }}>
+              {crawlProgress.currentUrl}
+            </span>
+          </div>
+          <div style={{
+            width: '100%',
+            height: '6px',
+            background: 'var(--color-bg-secondary)',
+            borderRadius: '3px',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              width: `${Math.min(100, (crawlProgress.pagesVisited / crawlProgress.pagesTotal) * 100)}%`,
+              height: '100%',
+              background: 'var(--color-primary)',
+              borderRadius: '3px',
+              transition: 'width 0.3s ease'
+            }} />
+          </div>
+        </div>
+      )}
+
+      {/* Tabs */}
       <div className="flex gap-4 mb-6">
-        <button 
-          onClick={() => setActiveTab('overview')}
-          className={`btn ${activeTab === 'overview' ? 'btn-primary' : 'btn-secondary'}`}
-        >
-          <FileText size={18} />
-          Overview
-        </button>
-        <button 
-          onClick={() => setActiveTab('graph')}
-          className={`btn ${activeTab === 'graph' ? 'btn-primary' : 'btn-secondary'}`}
-        >
-          <BarChart3 size={18} />
-          Knowledge Graph
-        </button>
-        <button 
-          onClick={() => setActiveTab('sessions')}
-          className={`btn ${activeTab === 'sessions' ? 'btn-primary' : 'btn-secondary'}`}
-        >
-          <RotateCcw size={18} />
-          Crawl Sessions ({sessions.length})
-        </button>
+        {(['overview', 'documents', 'graph', 'sessions'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            {tab === 'overview' && <FileText size={18} />}
+            {tab === 'documents' && <BookOpen size={18} />}
+            {tab === 'graph' && <BarChart3 size={18} />}
+            {tab === 'sessions' && <RotateCcw size={18} />}
+            {tab === 'overview' && 'Overview'}
+            {tab === 'documents' && 'Documents'}
+            {tab === 'graph' && 'Knowledge Graph'}
+            {tab === 'sessions' && `Crawl Sessions (${sessions.length})`}
+          </button>
+        ))}
       </div>
 
       {activeTab === 'overview' && (
@@ -174,16 +217,23 @@ const ProjectDetail: React.FC = () => {
             <div className="stat-label">Crawl Sessions</div>
           </div>
           <div className="stat-card">
-            <div className="stat-value">{sessions[sessions.length - 1]?.pages_visited || 0}</div>
+            <div className="stat-value">{totalPages}</div>
             <div className="stat-label">Pages Discovered</div>
           </div>
           <div className="stat-card">
             <div className="stat-value">
-              {sessions.find(s => s.status === 'running') ? 'Running' : 'Idle'}
+              {activeCrawlSessionId ? 'Running' : latestSession?.status || 'Idle'}
             </div>
             <div className="stat-label">Status</div>
           </div>
         </div>
+      )}
+
+      {activeTab === 'documents' && id && (
+        <DocumentsPanel
+          projectId={id}
+          sessions={sessions}
+        />
       )}
 
       {activeTab === 'graph' && id && (

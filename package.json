@@ -1,0 +1,21 @@
+{
+  "name": "floww",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "crawler-engine",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:engine": "cd crawler-engine && npm run build",
+    "typecheck": "cd crawler-engine && npx tsc --noEmit && cd ../backend && npx tsc --noEmit && cd ../frontend && npx tsc --noEmit",
+    "clean": "rm -rf crawler-engine/dist backend/dist frontend/dist"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
