@@ -10,7 +10,7 @@ const crawl = new Hono()
 // Start new crawl
 crawl.post('/:projectId/crawl', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
   
   // Parse body (may be empty)
   let body = {}
@@ -82,7 +82,7 @@ crawl.post('/:projectId/crawl', requireAuth, async (c) => {
 // Get crawl sessions for project
 crawl.get('/:projectId/crawl', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -110,8 +110,8 @@ crawl.get('/:projectId/crawl', requireAuth, async (c) => {
 // Get crawl session status
 crawl.get('/:projectId/crawl/:sessionId', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
-  const sessionId = c.req.param('sessionId')
+  const projectId = c.req.param('projectId')!
+  const sessionId = c.req.param('sessionId')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -142,8 +142,8 @@ crawl.get('/:projectId/crawl/:sessionId', requireAuth, async (c) => {
 // Cancel crawl
 crawl.post('/:projectId/crawl/:sessionId/cancel', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
-  const sessionId = c.req.param('sessionId')
+  const projectId = c.req.param('projectId')!
+  const sessionId = c.req.param('sessionId')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -181,7 +181,7 @@ crawl.post('/:projectId/crawl/:sessionId/cancel', requireAuth, async (c) => {
 })
 
 // User action endpoint (continue, skip, cancel) for interactive crawling
-crawl.post('/action', async (c) => {
+crawl.post('/:projectId/crawl/action', async (c) => {
   const body = await c.req.json()
   const { sessionId, action } = body
 

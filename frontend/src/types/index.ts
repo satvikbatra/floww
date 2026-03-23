@@ -10,12 +10,13 @@ export interface Project {
 export interface CrawlSession {
   id: string
   project_id: string
-  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
+  status: string
   pages_visited: number
   pages_total: number
   errors_count: number
   started_at?: string
   completed_at?: string
+  created_at: string
   last_error?: string
 }
 

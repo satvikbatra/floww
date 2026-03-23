@@ -6,7 +6,7 @@ import { readFileSync } from 'fs';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { env } from '../../config/env.js';
+import { env } from '../../config/env';
 
 // Schemas
 export const PageAnalysisResultSchema = z.object({
@@ -430,4 +430,16 @@ export function getLLMClient(provider?: string): LLMClient {
     llmClientInstance = new LLMClient(provider);
   }
   return llmClientInstance;
+}
+
+/**
+ * Safe version that returns null instead of throwing when no API keys configured
+ */
+export function tryGetLLMClient(provider?: string): LLMClient | null {
+  try {
+    if (!env.OPENAI_API_KEY && !env.ANTHROPIC_API_KEY) return null;
+    return getLLMClient(provider);
+  } catch {
+    return null;
+  }
 }

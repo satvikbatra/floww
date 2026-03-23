@@ -8,7 +8,8 @@ config()
 const envSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().default('8080').transform(Number),
+  PORT: z.string().default('8000').transform(Number),
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'fatal']).default('debug'),
   
   // Database
   DATABASE_URL: z.string().min(1),
@@ -20,12 +21,13 @@ const envSchema = z.object({
   DISABLE_AUTH: z.string().transform(val => val === 'true').default('false'),
   
   // CORS
-  CORS_ORIGINS: z.string().default('http://localhost:4000').transform(s => s.split(',')),
+  CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:4000').transform(s => s.split(',')),
   
-  //Storage
+  // Storage
   STORAGE_PATH: z.string().default('./storage'),
   ARCHIVE_PATH: z.string().default('./archive_storage'),
   GRAPH_PATH: z.string().default('./graph_storage'),
+  OUTPUT_PATH: z.string().default('./storage/output'),
   
   // Optional: LLM
   OPENAI_API_KEY: z.string().optional(),
@@ -81,6 +83,7 @@ export const appConfig = {
     basePath: env.STORAGE_PATH,
     archivePath: env.ARCHIVE_PATH,
     graphPath: env.GRAPH_PATH,
+    outputPath: env.OUTPUT_PATH,
   },
   
   llm: {

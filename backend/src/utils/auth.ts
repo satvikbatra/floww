@@ -22,40 +22,33 @@ export interface TokenPayload {
   sub: string // user ID
   email: string
   role: string
-}
-
-export interface AccessTokenPayload extends TokenPayload {
-  type: 'access'
-}
-
-export interface RefreshTokenPayload extends TokenPayload {
-  type: 'refresh'
+  type: 'access' | 'refresh'
 }
 
 // Create access token
 export const createAccessToken = (user: User): string => {
-  const payload: AccessTokenPayload = {
+  const payload: TokenPayload = {
     sub: user.id,
     email: user.email,
     role: user.role,
     type: 'access',
   }
 
-  return jwt.sign(payload, appConfig.auth.jwtSecret, {
+  return (jwt.sign as any)(payload, appConfig.auth.jwtSecret, {
     expiresIn: appConfig.auth.accessTokenExpiry,
   })
 }
 
 // Create refresh token
 export const createRefreshToken = (user: User): string => {
-  const payload: RefreshTokenPayload = {
+  const payload: TokenPayload = {
     sub: user.id,
     email: user.email,
     role: user.role,
     type: 'refresh',
   }
 
-  return jwt.sign(payload, appConfig.auth.jwtSecret, {
+  return (jwt.sign as any)(payload, appConfig.auth.jwtSecret, {
     expiresIn: appConfig.auth.refreshTokenExpiry,
   })
 }

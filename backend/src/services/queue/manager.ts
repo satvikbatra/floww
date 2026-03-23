@@ -5,13 +5,15 @@
  */
 
 import { Queue, Worker, Job } from 'bullmq';
-import { env } from '../../config/env.js';
+import { env } from '../../config/env';
 import IORedis from 'ioredis';
 
-// Redis connection
-const connection = env.REDIS_URL
-  ? new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null })
-  : new IORedis({ maxRetriesPerRequest: null });
+// Lazy Redis connection - only created when queue/workers are used
+function createConnection() {
+  return env.REDIS_URL
+    ? new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null })
+    : new IORedis({ maxRetriesPerRequest: null });
+}
 
 // Job types
 export interface CrawlPageJob {
@@ -39,11 +41,13 @@ export class QueueManager {
   private crawlQueue: Queue<CrawlPageJob>;
   private graphQueue: Queue<BuildGraphJob>;
   private docsQueue: Queue<GenerateDocsJob>;
+  private connection: any;
 
   constructor() {
-    this.crawlQueue = new Queue<CrawlPageJob>('crawl', { connection });
-    this.graphQueue = new Queue<BuildGraphJob>('graph', { connection });
-    this.docsQueue = new Queue<GenerateDocsJob>('docs', { connection });
+    this.connection = createConnection();
+    this.crawlQueue = new Queue<CrawlPageJob>('crawl', { connection: this.connection });
+    this.graphQueue = new Queue<BuildGraphJob>('graph', { connection: this.connection });
+    this.docsQueue = new Queue<GenerateDocsJob>('docs', { connection: this.connection });
   }
 
   /**
@@ -124,7 +128,7 @@ export class QueueManager {
       this.graphQueue.close(),
       this.docsQueue.close(),
     ]);
-    await connection.quit();
+    await this.connection.quit();
   }
 }
 
@@ -135,29 +139,28 @@ export class WorkerManager {
   private crawlWorker: Worker<CrawlPageJob>;
   private graphWorker: Worker<BuildGraphJob>;
   private docsWorker: Worker<GenerateDocsJob>;
+  private connection: any;
 
   constructor() {
+    this.connection = createConnection();
+
     // Crawl worker
     this.crawlWorker = new Worker<CrawlPageJob>(
       'crawl',
       async (job: Job<CrawlPageJob>) => {
         console.log(`Processing crawl job ${job.id}:`, job.data.url);
-        
+
         // Import services lazily to avoid circular dependencies
-        const { CrawlerService } = await import('../../modules/crawl/service.js');
-        const { prisma } = await import('../../db/client.js');
+        const { db } = await import('../../db/client');
 
         // Get project
-        const project = await prisma.project.findUnique({
+        const project = await db.project.findUnique({
           where: { id: job.data.projectId },
         });
 
         if (!project) {
           throw new Error('Project not found');
         }
-
-        // Create crawler service
-        const crawler = new CrawlerService();
 
         // Crawl page (simplified - in real implementation would integrate fully)
         await job.updateProgress(50);
@@ -168,11 +171,11 @@ export class WorkerManager {
         return { success: true, url: job.data.url };
       },
       {
-        connection,
+        connection: this.connection,
         concurrency: 3,
         limiter: {
           max: 10,
-          duration: 1000, // 10 requests per second
+          duration: 1000,
         },
       }
     );
@@ -183,16 +186,13 @@ export class WorkerManager {
       async (job: Job<BuildGraphJob>) => {
         console.log(`Processing graph job ${job.id} for project:`, job.data.projectId);
 
-        // Build knowledge graph
         await job.updateProgress(50);
-
-        // Save graph
         await job.updateProgress(100);
 
         return { success: true };
       },
       {
-        connection,
+        connection: this.connection,
         concurrency: 2,
       }
     );
@@ -203,17 +203,14 @@ export class WorkerManager {
       async (job: Job<GenerateDocsJob>) => {
         console.log(`Processing docs job ${job.id} for project:`, job.data.projectId);
 
-        // Generate documentation
         await job.updateProgress(50);
-
-        // Save documentation
         await job.updateProgress(100);
 
         return { success: true };
       },
       {
-        connection,
-        concurrency: 1, // Sequential to avoid conflicts
+        connection: this.connection,
+        concurrency: 1,
       }
     );
 
@@ -262,6 +259,7 @@ export class WorkerManager {
       this.graphWorker.close(),
       this.docsWorker.close(),
     ]);
+    await this.connection.quit();
   }
 }
 

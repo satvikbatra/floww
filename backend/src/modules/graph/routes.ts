@@ -9,7 +9,7 @@ const graph = new Hono()
 // Get graph nodes
 graph.get('/:projectId/graph/nodes', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
   const nodeType = c.req.query('node_type') as NodeType | undefined
 
   // Verify project
@@ -29,7 +29,7 @@ graph.get('/:projectId/graph/nodes', requireAuth, async (c) => {
 
   // Filter by type if specified
   const nodes = nodeType
-    ? allNodes.filter((n) => n.type === nodeType)
+    ? allNodes.filter((n) => (n as any).type === nodeType)
     : allNodes
 
   return c.json({
@@ -41,7 +41,7 @@ graph.get('/:projectId/graph/nodes', requireAuth, async (c) => {
 // Get graph edges
 graph.get('/:projectId/graph/edges', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -67,7 +67,7 @@ graph.get('/:projectId/graph/edges', requireAuth, async (c) => {
 // Get graph statistics
 graph.get('/:projectId/graph/stats', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -90,7 +90,7 @@ graph.get('/:projectId/graph/stats', requireAuth, async (c) => {
 // Get detected workflows
 graph.get('/:projectId/graph/workflows', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -116,7 +116,7 @@ graph.get('/:projectId/graph/workflows', requireAuth, async (c) => {
 // Get full graph for visualization
 graph.get('/:projectId/graph/visualization', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
 
   // Verify project
   const project = await db.project.findFirst({
@@ -139,7 +139,7 @@ graph.get('/:projectId/graph/visualization', requireAuth, async (c) => {
 // Search graph
 graph.get('/:projectId/graph/search', requireAuth, async (c) => {
   const user = c.get('user')
-  const projectId = c.req.param('projectId')
+  const projectId = c.req.param('projectId')!
   const query = c.req.query('q') || ''
 
   // Verify project

@@ -74,6 +74,9 @@ export const generateDocumentSchema = z.object({
   description: z.string().optional(),
   format: z.enum(['MARKDOWN', 'HTML', 'PDF', 'JSON']).default('MARKDOWN'),
   crawlSessionId: z.string().uuid().optional(),
+  includeScreenshots: z.boolean().default(true),
+  includeAiAnalysis: z.boolean().default(true),
+  language: z.string().default('en'),
 })
 
 export type GenerateDocumentInput = z.infer<typeof generateDocumentSchema>

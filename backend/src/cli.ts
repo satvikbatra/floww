@@ -61,7 +61,7 @@ program
       console.log('  1. Edit floww.yaml to customize your project');
       console.log('  2. Run: floww crawl');
       console.log('\nConfiguration saved to:', configPath);
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error:', error.message);
       process.exit(1);
     }
@@ -131,7 +131,7 @@ program
       console.log();
       console.log(`    POST http://localhost:8000/api/v1/projects/:id/crawl/start`);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error:', error.message);
       if (error.errors) {
         error.errors.forEach((err: string) => console.error(`  - ${err}`));
@@ -164,7 +164,7 @@ program
       console.log(`  Max Depth: ${config.scope?.maxDepth || 'default'}`);
       console.log(`  Auth Type: ${config.auth?.type || 'none'}`);
       console.log(`  Output Formats: ${config.output?.formats?.join(', ') || 'markdown'}`);
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Validation failed');
       if (error.errors) {
         console.log('\nErrors:');
@@ -195,7 +195,7 @@ program
         console.log('⚠️  Backend is not responding properly');
         console.log(`   Status: ${response.status}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.log('❌ Cannot connect to backend');
       console.log(`   URL: ${options.url}`);
       console.log(`   Error: ${error.message}`);

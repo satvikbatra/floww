@@ -62,7 +62,7 @@ projects.get('/', requireAuth, async (c) => {
 // Get single project
 projects.get('/:id', requireAuth, async (c) => {
   const user = c.get('user')
-  const id = c.req.param('id')
+  const id = c.req.param('id')!
 
   const project = await db.project.findFirst({
     where: {
@@ -81,7 +81,7 @@ projects.get('/:id', requireAuth, async (c) => {
 // Update project
 projects.patch('/:id', requireAuth, async (c) => {
   const user = c.get('user')
-  const id = c.req.param('id')
+  const id = c.req.param('id')!
   const body = await c.req.json()
   const data = validate(updateProjectSchema, body)
 
@@ -113,7 +113,7 @@ projects.patch('/:id', requireAuth, async (c) => {
 // Delete project
 projects.delete('/:id', requireAuth, async (c) => {
   const user = c.get('user')
-  const id = c.req.param('id')
+  const id = c.req.param('id')!
 
   const project = await db.project.findFirst({
     where: {
@@ -134,7 +134,7 @@ projects.delete('/:id', requireAuth, async (c) => {
 // Get project statistics
 projects.get('/:id/stats', requireAuth, async (c) => {
   const user = c.get('user')
-  const id = c.req.param('id')
+  const id = c.req.param('id')!
 
   const project = await db.project.findFirst({
     where: {

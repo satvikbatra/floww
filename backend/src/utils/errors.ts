@@ -58,7 +58,7 @@ export const errorHandler = (err: Error, c: Context) => {
         error: err.message,
         statusCode: err.statusCode,
       },
-      err.statusCode
+      err.statusCode as any
     )
   }
 

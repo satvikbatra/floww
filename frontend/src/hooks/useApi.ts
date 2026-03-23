@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
 const api = axios.create({
   baseURL: API_URL,
@@ -25,12 +25,32 @@ export const createProject = (data: any) => api.post('/projects', data)
 export const deleteProject = (id: string) => api.delete(`/projects/${id}`)
 
 // Crawl
-export const startCrawl = (projectId: string, data?: any) => 
+export const startCrawl = (projectId: string, data?: any) =>
   api.post(`/projects/${projectId}/crawl`, data || {})
-export const getCrawlSessions = (projectId: string) => 
+export const getCrawlSessions = (projectId: string) =>
   api.get(`/projects/${projectId}/crawl`)
-export const getCrawlStatus = (projectId: string, sessionId: string) => 
+export const getCrawlStatus = (projectId: string, sessionId: string) =>
   api.get(`/projects/${projectId}/crawl/${sessionId}`)
+export const sendCrawlAction = (projectId: string, sessionId: string, action: string) =>
+  api.post(`/projects/${projectId}/crawl/action`, { sessionId, action })
+
+// Documents
+export const generateDocument = (projectId: string, data: any) =>
+  api.post(`/projects/${projectId}/documents`, data)
+export const getDocuments = (projectId: string) =>
+  api.get(`/projects/${projectId}/documents`)
+export const getDocument = (projectId: string, docId: string) =>
+  api.get(`/projects/${projectId}/documents/${docId}`)
+export const downloadDocument = (projectId: string, docId: string) =>
+  api.get(`/projects/${projectId}/documents/${docId}/content`, { responseType: 'blob' })
+export const deleteDocument = (projectId: string, docId: string) =>
+  api.delete(`/projects/${projectId}/documents/${docId}`)
+
+// Analysis
+export const startAnalysis = (projectId: string, crawlSessionId?: string) =>
+  api.post(`/projects/${projectId}/analyze`, { crawlSessionId })
+export const getAnalysisStatus = (projectId: string) =>
+  api.get(`/projects/${projectId}/analyze/status`)
 
 // Graph
 export const getGraphNodes = (projectId: string, params?: any) => 

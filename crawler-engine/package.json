@@ -1,0 +1,36 @@
+{
+  "name": "@floww/crawler-engine",
+  "version": "0.1.0",
+  "description": "Production-grade web crawler engine with browser pool, request queue, and content pipeline",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest"
+  },
+  "keywords": ["crawler", "web-scraping", "playwright", "browser-automation"],
+  "license": "MIT",
+  "dependencies": {
+    "zod": "^3.23.8",
+    "cheerio": "^1.0.0"
+  },
+  "peerDependencies": {
+    "playwright": "^1.40.0"
+  },
+  "optionalDependencies": {
+    "bullmq": "^5.7.0",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.2",
+    "typescript": "^5.4.5",
+    "tsx": "^4.15.4",
+    "vitest": "^1.6.0",
+    "playwright": "^1.44.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
