@@ -5,7 +5,7 @@ export { FlowwCrawler } from './crawler'
 export { CrawlerConfigSchema, type CrawlerConfig } from './config'
 
 // Types
-export type { CrawlRequest, CrawlResult, CrawlSummary, PageData, CrawlStatisticsSnapshot, ObstacleInfo } from './types'
+export type { CrawlRequest, CrawlResult, CrawlSummary, PageData, CrawlStatisticsSnapshot, ObstacleInfo, AXNodeInfo, EnrichedElement, IndexedDOM, WatchdogEvent } from './types'
 
 // Events
 export { CrawlEvent } from './events/event-types'
@@ -25,6 +25,7 @@ export { MetadataProcessor } from './pipeline/processors/metadata-extractor'
 export { LinkExtractorProcessor } from './pipeline/processors/link-extractor'
 export { HtmlCleanerProcessor } from './pipeline/processors/html-cleaner'
 export { MarkdownProcessor } from './pipeline/processors/markdown-converter'
+export { DOMEnricherProcessor } from './pipeline/processors/dom-enricher'
 
 // Browser
 export { BrowserPool } from './browser/browser-pool'
@@ -39,6 +40,11 @@ export { submitGetForms } from './browser/form-submitter'
 export { checkSessionStatus, detectAuthCookies, saveCookies, restoreCookies } from './browser/session-guard'
 export { handleChallenge, handleMetaRefresh, waitForJsRedirect } from './browser/challenge-handler'
 export { extractShadowDOMContent, extractIframeLinks, detectHashRoutes, extractCanonicalUrl as extractCanonicalUrlFromPage, detectHreflangUrls, detectPagination } from './browser/content-extractor'
+export { getCDPSession, disposeCDPSession } from './browser/cdp-session'
+export { fetchAccessibilityTree, buildAXNodeMap } from './browser/accessibility-tree'
+export { indexPageElements, serializeIndexedDOM } from './browser/dom-indexer'
+export { checkVisibility } from './browser/visibility-filter'
+export { Watchdog, WatchdogManager, type WatchdogName, type WatchdogHandler } from './browser/watchdog'
 export { RedirectGuard } from './strategy/redirect-guard'
 export { isPaginationUrl, extractCanonicalUrl as extractCanonicalUrlFromHtml } from './queue/request'
 
@@ -66,3 +72,12 @@ export { SessionPool } from './session/session-pool'
 
 // Retry
 export { RetryHandler } from './retry/retry-handler'
+
+// Proxy
+export { ProxyRotator, type ProxyConfig, type RotationStrategy, type ProxyHealth } from './proxy/proxy-rotator'
+
+// Block Detection
+export { BlockDetector, type BlockSignal } from './strategy/block-detector'
+
+// Checkpoints
+export { CheckpointManager, type CrawlCheckpoint } from './checkpoint/checkpoint'

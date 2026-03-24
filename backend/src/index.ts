@@ -132,9 +132,8 @@ async function gracefulShutdown(signal: string) {
   server.close()
 
   // Cancel active crawls
-  const activeCrawlerIds = Array.from((CrawlerService as any).activeCrawlers?.keys?.() || [])
-  for (const sessionId of activeCrawlerIds) {
-    const active = CrawlerService.getActiveCrawler(sessionId as string)
+  for (const sessionId of CrawlerService.getActiveSessionIds()) {
+    const active = CrawlerService.getActiveCrawler(sessionId)
     if (active?.crawler) {
       appLogger.info(`Cancelling active crawl: ${sessionId}`)
       await active.crawler.cancel().catch(() => {})

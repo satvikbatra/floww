@@ -123,13 +123,13 @@ program
       // In a full implementation, this would start the crawler
       // For now, we direct users to use the API
       console.log('💡 Use the REST API to start crawling:');
-      console.log(`    POST http://localhost:8000/api/v1/projects`);
+      console.log(`    POST http://localhost:8100/api/v1/projects`);
       console.log(`    {`);
       console.log(`      "name": "${config.name}",`);
       console.log(`      "baseUrl": "${config.baseUrl}"`);
       console.log(`    }`);
       console.log();
-      console.log(`    POST http://localhost:8000/api/v1/projects/:id/crawl/start`);
+      console.log(`    POST http://localhost:8100/api/v1/projects/:id/crawl/start`);
 
     } catch (error: any) {
       console.error('❌ Error:', error.message);
@@ -182,7 +182,7 @@ program
 program
   .command('status')
   .description('Check Floww backend status')
-  .option('--url <url>', 'Backend URL', 'http://localhost:8000')
+  .option('--url <url>', 'Backend URL', 'http://localhost:8100')
   .action(async (options) => {
     try {
       const response = await fetch(`${options.url}/health`);

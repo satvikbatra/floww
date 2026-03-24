@@ -6,6 +6,8 @@ import { validate, generateDocumentSchema } from '../../types/schemas'
 import { graphManager } from '../../services/graph/knowledge-graph'
 import { documentGenerator } from '../../services/documents/generator'
 import { promises as fs } from 'fs'
+import path from 'path'
+import { appConfig } from '../../config/env'
 
 const documents = new Hono()
 
@@ -71,7 +73,9 @@ documents.post('/:projectId/documents', requireAuth, async (c) => {
         },
       })
     }
-  })()
+  })().catch((err) => {
+    console.error('Document generation background task crashed:', err)
+  })
 
   return c.json(doc, 201)
 })
@@ -132,8 +136,15 @@ documents.get('/:projectId/documents/:documentId/content', requireAuth, async (c
   })
   if (!doc || !doc.outputPath) throw new NotFoundError('Document not found or not generated yet')
 
+  // Path traversal protection — ensure outputPath is within expected directory
+  const resolvedPath = path.resolve(doc.outputPath)
+  const allowedBase = path.resolve(appConfig.storage.outputPath)
+  if (!resolvedPath.startsWith(allowedBase)) {
+    throw new NotFoundError('Document file path is invalid')
+  }
+
   try {
-    const content = await fs.readFile(doc.outputPath, 'utf-8')
+    const content = await fs.readFile(resolvedPath, 'utf-8')
     const contentType = doc.format === 'HTML' ? 'text/html'
       : doc.format === 'JSON' ? 'application/json'
       : 'text/markdown'

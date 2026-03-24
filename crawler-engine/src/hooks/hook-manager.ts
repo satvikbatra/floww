@@ -20,7 +20,13 @@ export class HookManager {
     const fns = this.hooks.get(name) || []
     for (const fn of fns) {
       if (ctx.aborted || ctx.skipped || ctx.cancelled) break
-      await fn(ctx)
+      try {
+        await fn(ctx)
+      } catch (error) {
+        const wrapped = new Error(`Hook "${name}" failed: ${error instanceof Error ? error.message : String(error)}`)
+        if (error instanceof Error) wrapped.cause = error
+        throw wrapped
+      }
     }
     return ctx
   }

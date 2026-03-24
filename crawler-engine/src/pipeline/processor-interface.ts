@@ -1,5 +1,5 @@
 import type { Page } from 'playwright'
-import type { PageData } from '../types'
+import type { PageData, EnrichedElement } from '../types'
 
 export interface ProcessorContext {
   page: Page
@@ -8,6 +8,8 @@ export interface ProcessorContext {
   markdown?: string
   metadata: Record<string, any>
   links: Array<{ href: string; text: string }>
+  enrichedDOM?: string
+  enrichedDOMElements?: EnrichedElement[]
 }
 
 export interface IContentProcessor {

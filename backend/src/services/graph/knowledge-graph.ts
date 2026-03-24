@@ -497,17 +497,32 @@ export class KnowledgeGraph {
   }
 }
 
-// Graph manager for multiple projects
+// Graph manager for multiple projects (LRU cache, max 20 graphs in memory)
 class GraphManager {
   private graphs = new Map<string, KnowledgeGraph>()
+  private readonly maxCached = 20
 
   async getGraph(projectId: string): Promise<KnowledgeGraph> {
-    if (!this.graphs.has(projectId)) {
-      const graph = new KnowledgeGraph(projectId)
-      await graph.init()
+    if (this.graphs.has(projectId)) {
+      // Move to end (most recently used)
+      const graph = this.graphs.get(projectId)!
+      this.graphs.delete(projectId)
       this.graphs.set(projectId, graph)
+      return graph
     }
-    return this.graphs.get(projectId)!
+
+    // Evict oldest if at capacity
+    if (this.graphs.size >= this.maxCached) {
+      const oldestKey = this.graphs.keys().next().value!
+      const oldest = this.graphs.get(oldestKey)!
+      await oldest.save().catch(() => {})
+      this.graphs.delete(oldestKey)
+    }
+
+    const graph = new KnowledgeGraph(projectId)
+    await graph.init()
+    this.graphs.set(projectId, graph)
+    return graph
   }
 
   async saveAll() {

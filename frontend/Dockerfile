@@ -1,21 +1,36 @@
-FROM node:20-alpine
+# --- Build stage ---
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
-# Install dependencies for native modules
-RUN apk add --no-cache python3 make g++
-
-# Copy package files
 COPY package*.json ./
+RUN npm ci
 
-# Install dependencies (including devDependencies)
-RUN npm install
-
-# Copy source code
 COPY . .
+RUN npx vite build
 
-# Expose Vite's default port
-EXPOSE 4000
+# --- Production stage ---
+FROM nginx:alpine
 
-# Start Vite dev server with host binding
-CMD ["npx", "vite", "--host", "0.0.0.0", "--port", "4000"]
+COPY --from=build /app/dist /usr/share/nginx/html
+
+# SPA routing: serve index.html for all routes
+RUN printf 'server {\n\
+    listen 80;\n\
+    root /usr/share/nginx/html;\n\
+    index index.html;\n\
+    location / {\n\
+        try_files $uri $uri/ /index.html;\n\
+    }\n\
+    location /api {\n\
+        proxy_pass http://backend:8000;\n\
+        proxy_http_version 1.1;\n\
+        proxy_set_header Upgrade $http_upgrade;\n\
+        proxy_set_header Connection "upgrade";\n\
+        proxy_set_header Host $host;\n\
+    }\n\
+}\n' > /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

@@ -100,12 +100,19 @@ export class WebSocketEventManager extends EventEmitter {
    */
   async sendToSession(sessionId: string, event: CrawlEvent) {
     const connection = this.connections.get(sessionId);
-    if (connection) {
-      try {
-        connection.send(JSON.stringify(event));
-      } catch (error) {
-        console.error(`Failed to send event to session ${sessionId}:`, error);
-      }
+    if (!connection) return;
+
+    // Check if connection is still open (readyState 1 = OPEN)
+    if (connection.readyState !== 1) {
+      this.connections.delete(sessionId);
+      return;
+    }
+
+    try {
+      connection.send(JSON.stringify(event));
+    } catch (error) {
+      console.error(`Failed to send event to session ${sessionId}:`, error);
+      this.connections.delete(sessionId);
     }
   }
 

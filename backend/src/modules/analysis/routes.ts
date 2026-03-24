@@ -23,8 +23,10 @@ analysis.post('/:projectId/analyze', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}))
   const crawlSessionId = (body as any).crawlSessionId
 
-  // Start analysis in background
-  analysisService.analyzeSession(projectId, crawlSessionId).catch(console.error)
+  // Start analysis in background — log errors
+  analysisService.analyzeSession(projectId, crawlSessionId).catch((error) => {
+    console.error('Analysis failed:', error)
+  })
 
   return c.json({
     message: 'Analysis started',

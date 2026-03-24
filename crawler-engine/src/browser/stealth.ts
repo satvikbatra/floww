@@ -13,6 +13,7 @@ export interface StealthLaunchOptions {
   userDataDir?: string
   headless?: boolean
   args?: string[]
+  proxyUrl?: string
 }
 
 export class StealthBrowserLauncher {
@@ -27,11 +28,14 @@ export class StealthBrowserLauncher {
       fs.mkdirSync(userDataDir, { recursive: true })
     }
 
+    const proxyConfig = options?.proxyUrl ? { server: options.proxyUrl } : undefined
+
     const context = await chromium.launchPersistentContext(userDataDir, {
       headless: options?.headless ?? false,
       channel: 'chrome',
       viewport: { width: 1920, height: 1080 },
       ignoreHTTPSErrors: true,
+      proxy: proxyConfig,
       args: [
         '--disable-blink-features=AutomationControlled',
         '--exclude-switches=enable-automation',
@@ -69,7 +73,10 @@ export class StealthBrowserLauncher {
     headless?: boolean
     userAgent?: string
     viewport?: { width: number; height: number }
+    proxyUrl?: string
   }): Promise<{ browser: any; context: BrowserContext }> {
+    const proxyConfig = options?.proxyUrl ? { server: options.proxyUrl } : undefined
+
     const browser = await chromium.launch({
       headless: options?.headless ?? true,
       args: [
@@ -78,6 +85,7 @@ export class StealthBrowserLauncher {
         '--no-sandbox',
         '--disable-setuid-sandbox',
       ],
+      proxy: proxyConfig,
     })
 
     const context = await browser.newContext({

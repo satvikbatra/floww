@@ -53,9 +53,15 @@ crawl.post('/:projectId/crawl', requireAuth, async (c) => {
     },
   })
 
-  // Start crawl in background
+  // Start crawl in background — update DB on failure
   const crawler = new CrawlerService()
-  crawler.startCrawl(session.id, project, config).catch(console.error)
+  crawler.startCrawl(session.id, project, config).catch(async (error) => {
+    console.error('Crawl start failed:', error)
+    await db.crawlSession.update({
+      where: { id: session.id },
+      data: { status: 'FAILED', completedAt: new Date(), lastError: String(error) },
+    }).catch(() => {})
+  })
 
   // Update status to RUNNING
   await db.crawlSession.update({
@@ -181,12 +187,20 @@ crawl.post('/:projectId/crawl/:sessionId/cancel', requireAuth, async (c) => {
 })
 
 // User action endpoint (continue, skip, cancel) for interactive crawling
-crawl.post('/:projectId/crawl/action', async (c) => {
+crawl.post('/:projectId/crawl/action', requireAuth, async (c) => {
+  const user = c.get('user')
+  const projectId = c.req.param('projectId')!
   const body = await c.req.json()
   const { sessionId, action } = body
 
   if (!sessionId || !action) {
     return c.json({ error: 'Missing sessionId or action' }, 400)
+  }
+
+  // Verify user owns this project
+  const project = await db.project.findFirst({ where: { id: projectId, ownerId: user.id } })
+  if (!project) {
+    return c.json({ error: 'Project not found' }, 404)
   }
 
   // Get the active crawler instance from the CrawlerService

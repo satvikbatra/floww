@@ -1,0 +1,38 @@
+/* Breadcrumb Component Styles */
+
+.container {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.itemWrapper {
+  display: flex;
+  align-items: center;
+}
+
+.separator {
+  color: var(--text-tertiary);
+  margin: 0 var(--space-1);
+  user-select: none;
+}
+
+.link {
+  color: var(--text-tertiary);
+  text-decoration: none;
+  transition: color var(--duration-normal) var(--ease-default);
+}
+
+.link:hover {
+  color: var(--text-primary);
+}
+
+.item {
+  color: var(--text-tertiary);
+}
+
+.current {
+  color: var(--text-primary);
+  font-weight: var(--font-medium);
+}

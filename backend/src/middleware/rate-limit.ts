@@ -36,9 +36,11 @@ interface RateLimitConfig {
  */
 export function rateLimit(config: RateLimitConfig) {
   return async (c: Context, next: Next) => {
+    // Use custom key function, or fall back to a connection-based identifier.
+    // Do NOT trust X-Forwarded-For blindly — it can be spoofed.
     const key = config.keyFn
       ? config.keyFn(c)
-      : c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+      : c.req.header('x-real-ip') || 'global'
 
     const now = Date.now()
     let bucket = buckets.get(key)

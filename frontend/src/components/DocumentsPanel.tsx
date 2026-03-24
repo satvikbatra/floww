@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { FileText, Download, Trash2, Loader, Sparkles } from 'lucide-react'
+import { FileText, Download, Trash2, Sparkles } from 'lucide-react'
 import {
   generateDocument,
   getDocuments,
@@ -8,7 +8,15 @@ import {
   startAnalysis,
   getAnalysisStatus,
 } from '../hooks/useApi'
+import { Card } from './ui/Card'
+import { Button } from './ui/Button'
+import { Input } from './ui/Input'
+import { Select } from './ui/Select'
+import { Badge } from './ui/Badge'
+import { Skeleton } from './ui/Skeleton'
+import { EmptyState } from './ui/EmptyState'
 import type { CrawlSession } from '../types'
+import styles from './DocumentsPanel.module.css'
 
 interface Document {
   id: string
@@ -156,122 +164,106 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({ projectId, sessi
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
-  const statusColors: Record<string, string> = {
-    PENDING: '#f59e0b',
-    GENERATING: '#3b82f6',
-    COMPLETED: '#10b981',
-    FAILED: '#ef4444',
+  const statusDotClass = (status: string) => {
+    switch (status) {
+      case 'PENDING': return styles.statusPending
+      case 'GENERATING': return styles.statusGenerating
+      case 'COMPLETED': return styles.statusCompleted
+      case 'FAILED': return styles.statusFailed
+      default: return ''
+    }
   }
 
+  const formatOptions = [
+    { value: 'MARKDOWN', label: 'Markdown' },
+    { value: 'HTML', label: 'HTML (self-contained)' },
+  ]
+
+  const sessionOptions = [
+    { value: '', label: 'Latest session' },
+    ...completedSessions.map(s => ({
+      value: s.id,
+      label: `${new Date(s.started_at || s.created_at).toLocaleString()} (${s.pages_visited} pages)`,
+    })),
+  ]
+
   if (loading) {
-    return <div className="flex items-center justify-center h-64"><div className="spinner" /></div>
+    return (
+      <div className={styles.skeletonList}>
+        <Skeleton variant="rectangular" height={56} />
+        <Skeleton variant="rectangular" height={64} />
+        <Skeleton variant="rectangular" height={64} />
+        <Skeleton variant="rectangular" height={64} />
+      </div>
+    )
   }
 
   return (
     <div>
-      {/* Actions bar */}
-      <div className="card mb-4" style={{ padding: '16px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+      {/* Actions Bar */}
+      <Card padding="sm" className={styles.actionsBar}>
         {hasData && (
           <>
-            <button
+            <Button
+              variant="secondary"
+              icon={<Sparkles size={16} />}
               onClick={handleAnalyze}
-              className="btn btn-secondary"
-              disabled={analyzing}
+              loading={analyzing}
             >
-              {analyzing ? <Loader size={18} className="spin" /> : <Sparkles size={18} />}
               {analyzing ? 'Analyzing...' : 'Run AI Analysis'}
-            </button>
+            </Button>
 
-            <button
+            <Button
+              icon={<FileText size={16} />}
               onClick={() => setShowForm(!showForm)}
-              className="btn btn-primary"
             >
-              <FileText size={18} />
               Generate Documentation
-            </button>
+            </Button>
           </>
         )}
 
         {analysisStatus && (
-          <span style={{ fontSize: '13px', opacity: 0.8, marginLeft: 'auto' }}>
-            {analysisStatus}
-          </span>
+          <span className={styles.analysisStatus}>{analysisStatus}</span>
         )}
 
         {!hasData && (
-          <p style={{ opacity: 0.6, margin: 0 }}>
+          <p className={styles.noDataText}>
             Complete a crawl first to generate documentation.
           </p>
         )}
-      </div>
+      </Card>
 
       {/* Generation Form */}
       {showForm && (
-        <div className="card mb-4" style={{ padding: '20px' }}>
-          <h3 style={{ marginTop: 0, marginBottom: '16px' }}>Generate Documentation</h3>
+        <Card className={styles.formCard}>
+          <h3 className={styles.formTitle}>Generate Documentation</h3>
 
-          <div style={{ display: 'grid', gap: '12px', maxWidth: '500px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                Document Title
-              </label>
-              <input
-                type="text"
-                value={formData.title}
-                onChange={e => setFormData({ ...formData, title: e.target.value })}
-                placeholder="e.g. User Manual"
-                style={{
-                  width: '100%', padding: '8px 12px',
-                  background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)',
-                  borderRadius: '6px', color: 'inherit', fontSize: '14px'
-                }}
-              />
-            </div>
+          <div className={styles.formGrid}>
+            <Input
+              label="Document Title"
+              value={formData.title}
+              onChange={e => setFormData({ ...formData, title: e.target.value })}
+              placeholder="e.g. User Manual"
+            />
 
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                Format
-              </label>
-              <select
-                value={formData.format}
-                onChange={e => setFormData({ ...formData, format: e.target.value as 'MARKDOWN' | 'HTML' })}
-                style={{
-                  width: '100%', padding: '8px 12px',
-                  background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)',
-                  borderRadius: '6px', color: 'inherit', fontSize: '14px'
-                }}
-              >
-                <option value="MARKDOWN">Markdown</option>
-                <option value="HTML">HTML (self-contained)</option>
-              </select>
-            </div>
+            <Select
+              label="Format"
+              value={formData.format}
+              onChange={e => setFormData({ ...formData, format: e.target.value as 'MARKDOWN' | 'HTML' })}
+              options={formatOptions}
+            />
 
             {completedSessions.length > 1 && (
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                  Crawl Session
-                </label>
-                <select
-                  value={formData.crawlSessionId}
-                  onChange={e => setFormData({ ...formData, crawlSessionId: e.target.value })}
-                  style={{
-                    width: '100%', padding: '8px 12px',
-                    background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)',
-                    borderRadius: '6px', color: 'inherit', fontSize: '14px'
-                  }}
-                >
-                  <option value="">Latest session</option>
-                  {completedSessions.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {new Date(s.started_at || s.created_at).toLocaleString()} ({s.pages_visited} pages)
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <Select
+                label="Crawl Session"
+                value={formData.crawlSessionId}
+                onChange={e => setFormData({ ...formData, crawlSessionId: e.target.value })}
+                options={sessionOptions}
+              />
             )}
 
-            <div style={{ display: 'flex', gap: '16px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+            <div className={styles.checkboxGroup}>
+              <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
                   checked={formData.includeScreenshots}
@@ -279,7 +271,7 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({ projectId, sessi
                 />
                 Include screenshots
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+              <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
                   checked={formData.includeAiAnalysis}
@@ -289,97 +281,90 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({ projectId, sessi
               </label>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-              <button
+            <div className={styles.formActions}>
+              <Button
+                icon={<FileText size={16} />}
                 onClick={handleGenerate}
-                className="btn btn-primary"
-                disabled={generating || !formData.title.trim()}
+                loading={generating}
+                disabled={!formData.title.trim()}
               >
-                {generating ? <Loader size={18} className="spin" /> : <FileText size={18} />}
                 {generating ? 'Generating...' : 'Generate'}
-              </button>
-              <button onClick={() => setShowForm(false)} className="btn btn-secondary">
+              </Button>
+              <Button variant="secondary" onClick={() => setShowForm(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* Documents List */}
       {documents.length > 0 ? (
-        <div className="card">
-          <h3 className="card-title mb-4">Generated Documents</h3>
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Format</th>
-                  <th>Status</th>
-                  <th>Size</th>
-                  <th>Generated</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {documents.map(doc => (
-                  <tr key={doc.id}>
-                    <td style={{ fontWeight: 500 }}>{doc.title}</td>
-                    <td>
-                      <span className="badge">{doc.format}</span>
-                    </td>
-                    <td>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '6px',
-                        padding: '2px 8px', borderRadius: '4px', fontSize: '12px',
-                        background: `${statusColors[doc.status]}20`,
-                        color: statusColors[doc.status]
-                      }}>
-                        {(doc.status === 'PENDING' || doc.status === 'GENERATING') && (
-                          <Loader size={12} className="spin" />
-                        )}
-                        {doc.status}
-                      </span>
-                    </td>
-                    <td>{doc.size ? formatSize(doc.size) : '-'}</td>
-                    <td>{doc.generatedAt ? new Date(doc.generatedAt).toLocaleString() : '-'}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        {doc.status === 'COMPLETED' && (
-                          <button
-                            onClick={() => handleDownload(doc)}
-                            className="btn btn-secondary"
-                            style={{ padding: '4px 8px', fontSize: '12px' }}
-                          >
-                            <Download size={14} />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleDelete(doc.id)}
-                          className="btn btn-secondary"
-                          style={{ padding: '4px 8px', fontSize: '12px', color: '#ef4444' }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <Card>
+          <h3 className={styles.listTitle}>Generated Documents</h3>
+          <div className={styles.documentsList}>
+            {documents.map(doc => (
+              <Card key={doc.id} variant="interactive" padding="sm" className={styles.documentCard}>
+                <FileText size={20} className={styles.docIcon} />
+
+                <div className={styles.docInfo}>
+                  <span className={styles.docTitle}>{doc.title}</span>
+                  <Badge variant="default">{doc.format}</Badge>
+                </div>
+
+                <div className={styles.docMeta}>
+                  <span className={styles.statusIndicator}>
+                    <span className={`${styles.statusDot} ${statusDotClass(doc.status)}`} />
+                    {doc.status}
+                  </span>
+                  {doc.size > 0 && <span>{formatSize(doc.size)}</span>}
+                  {doc.generatedAt && (
+                    <span>{new Date(doc.generatedAt).toLocaleString()}</span>
+                  )}
+                </div>
+
+                <div className={styles.docActions}>
+                  {doc.status === 'COMPLETED' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Download size={14} />}
+                      onClick={() => handleDownload(doc)}
+                    />
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Trash2 size={14} />}
+                    onClick={() => handleDelete(doc.id)}
+                  />
+                </div>
+              </Card>
+            ))}
           </div>
-        </div>
+        </Card>
       ) : (
-        <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
-          <FileText size={48} style={{ opacity: 0.3, margin: '0 auto 16px' }} />
-          <h3 style={{ marginBottom: '8px' }}>No documents yet</h3>
-          <p style={{ opacity: 0.6 }}>
-            {hasData
-              ? 'Click "Generate Documentation" to create your first document.'
-              : 'Complete a crawl session first, then generate documentation.'}
-          </p>
-        </div>
+        <Card>
+          <EmptyState
+            icon={<FileText size={48} />}
+            title="No documents yet"
+            description={
+              hasData
+                ? 'Click "Generate Documentation" to create your first document.'
+                : 'Complete a crawl session first, then generate documentation.'
+            }
+            action={
+              hasData ? (
+                <Button
+                  icon={<FileText size={16} />}
+                  onClick={() => setShowForm(true)}
+                >
+                  Generate Documentation
+                </Button>
+              ) : undefined
+            }
+          />
+        </Card>
       )}
     </div>
   )

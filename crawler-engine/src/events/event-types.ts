@@ -8,6 +8,8 @@ export const CrawlEvent = {
   CRAWL_ERROR: 'crawl:error',
   INTERACTION_NEEDED: 'interaction:needed',
   STATS_UPDATE: 'stats:update',
+  BLOCK_DETECTED: 'block:detected',
+  CHECKPOINT_SAVED: 'checkpoint:saved',
 } as const
 
 export type CrawlEventName = typeof CrawlEvent[keyof typeof CrawlEvent]

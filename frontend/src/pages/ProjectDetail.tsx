@@ -1,18 +1,43 @@
 import React, { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Play, FileText, BarChart3, RotateCcw, BookOpen } from 'lucide-react'
+import { motion } from 'framer-motion'
 import { getProject, getCrawlSessions, startCrawl, sendCrawlAction } from '../hooks/useApi'
 import { InteractiveCrawlBanner } from '../components/InteractiveCrawlBanner'
 import { DocumentsPanel } from '../components/DocumentsPanel'
 import GraphExplorer from './GraphExplorer'
+import { Card } from '../components/ui/Card'
+import { Button } from '../components/ui/Button'
+import { Badge } from '../components/ui/Badge'
+import { Tabs } from '../components/ui/Tabs'
+import { ProgressBar } from '../components/ui/ProgressBar'
+import { Skeleton } from '../components/ui/Skeleton'
+import { EmptyState } from '../components/ui/EmptyState'
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '../components/ui/Table'
 import type { Project, CrawlSession } from '../types'
+import styles from './ProjectDetail.module.css'
+
+const statusVariantMap: Record<string, 'primary' | 'success' | 'error' | 'warning' | 'info' | 'default'> = {
+  RUNNING: 'primary',
+  COMPLETED: 'success',
+  FAILED: 'error',
+  CANCELLED: 'warning',
+  PENDING: 'info',
+}
 
 const ProjectDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const [project, setProject] = useState<Project | null>(null)
   const [sessions, setSessions] = useState<CrawlSession[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overview' | 'graph' | 'sessions' | 'documents'>('overview')
+  const [activeTab, setActiveTab] = useState<string>('overview')
   const [activeCrawlSessionId, setActiveCrawlSessionId] = useState<string | null>(null)
   const [crawlProgress, setCrawlProgress] = useState<{
     pagesVisited: number
@@ -32,7 +57,7 @@ const ProjectDetail: React.FC = () => {
       return
     }
 
-    const wsUrl = `ws://localhost:8000/api/v1/ws/crawl/${activeCrawlSessionId}`
+    const wsUrl = `ws://localhost:8100/api/v1/ws/crawl/${activeCrawlSessionId}`
     let ws: WebSocket | null = null
 
     try {
@@ -115,21 +140,57 @@ const ProjectDetail: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="spinner" />
+      <div className={styles.skeletonPage}>
+        <div className={styles.skeletonHeader}>
+          <div className={styles.skeletonHeaderLeft}>
+            <Skeleton variant="rectangular" width={280} height={32} />
+            <Skeleton variant="rectangular" width={200} height={24} />
+          </div>
+          <Skeleton variant="rectangular" width={120} height={40} />
+        </div>
+        <div className={styles.skeletonTabs}>
+          <Skeleton variant="rectangular" width={100} height={36} />
+          <Skeleton variant="rectangular" width={100} height={36} />
+          <Skeleton variant="rectangular" width={100} height={36} />
+          <Skeleton variant="rectangular" width={100} height={36} />
+        </div>
+        <div className={styles.skeletonCards}>
+          <Skeleton variant="rectangular" height={120} />
+          <Skeleton variant="rectangular" height={120} />
+          <Skeleton variant="rectangular" height={120} />
+        </div>
       </div>
     )
   }
 
   if (!project) {
-    return <div className="card p-8 text-center">Project not found</div>
+    return (
+      <Card>
+        <EmptyState
+          title="Project not found"
+          description="The project you are looking for does not exist or has been removed."
+        />
+      </Card>
+    )
   }
 
   const latestSession = sessions[0]
   const totalPages = sessions.reduce((sum, s) => sum + (s.pages_visited || 0), 0)
+  const documentsCount = undefined // Documents count is managed inside DocumentsPanel
+
+  const progressPercent = crawlProgress
+    ? Math.min(100, (crawlProgress.pagesVisited / crawlProgress.pagesTotal) * 100)
+    : 0
+
+  const tabDefinitions = [
+    { id: 'overview', label: 'Overview', icon: <FileText size={16} /> },
+    { id: 'documents', label: 'Documents', icon: <BookOpen size={16} />, count: documentsCount },
+    { id: 'graph', label: 'Knowledge Graph', icon: <BarChart3 size={16} /> },
+    { id: 'sessions', label: 'Sessions', icon: <RotateCcw size={16} />, count: sessions.length },
+  ]
 
   return (
-    <div>
+    <div className={styles.page}>
       {/* Interactive Crawl Banner */}
       {activeCrawlSessionId && (
         <InteractiveCrawlBanner
@@ -140,142 +201,168 @@ const ProjectDetail: React.FC = () => {
         />
       )}
 
-      <div className="page-header">
-        <div className="flex justify-between items-start">
-          <div>
-            <h2>{project.name}</h2>
-            <p className="flex items-center gap-2">
-              <code>{project.base_url}</code>
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleStartCrawl}
-              className="btn btn-primary"
-              disabled={!!activeCrawlSessionId}
-            >
-              <Play size={18} />
-              {activeCrawlSessionId ? 'Crawling...' : 'Start Crawl'}
-            </button>
-          </div>
+      {/* Header */}
+      <motion.div
+        className={styles.header}
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+      >
+        <div className={styles.headerInfo}>
+          <h1 className={styles.title}>{project.name}</h1>
+          <Badge variant="default" className={styles.baseUrl}>{project.base_url}</Badge>
         </div>
-      </div>
+        <div className={styles.headerActions}>
+          <Button
+            icon={<Play size={18} />}
+            onClick={handleStartCrawl}
+            disabled={!!activeCrawlSessionId}
+          >
+            {activeCrawlSessionId ? 'Crawling...' : 'Start Crawl'}
+          </Button>
+        </div>
+      </motion.div>
 
-      {/* Crawl Progress Bar */}
+      {/* Crawl Progress */}
       {crawlProgress && (
-        <div className="card mb-4" style={{ padding: '12px 16px' }}>
-          <div className="flex justify-between items-center mb-2">
-            <span style={{ fontSize: '14px', fontWeight: 600 }}>
-              Crawling: {crawlProgress.pagesVisited} / {crawlProgress.pagesTotal} pages
-            </span>
-            <span style={{ fontSize: '12px', opacity: 0.7 }}>
-              {crawlProgress.currentUrl}
-            </span>
-          </div>
-          <div style={{
-            width: '100%',
-            height: '6px',
-            background: 'var(--color-bg-secondary)',
-            borderRadius: '3px',
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              width: `${Math.min(100, (crawlProgress.pagesVisited / crawlProgress.pagesTotal) * 100)}%`,
-              height: '100%',
-              background: 'var(--color-primary)',
-              borderRadius: '3px',
-              transition: 'width 0.3s ease'
-            }} />
-          </div>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.25 }}
+        >
+          <Card padding="sm" className={styles.progressCard}>
+            <div className={styles.progressHeader}>
+              <span className={styles.progressLabel}>
+                Crawling: {crawlProgress.pagesVisited} / {crawlProgress.pagesTotal} pages
+              </span>
+              <span className={styles.progressUrl}>
+                {crawlProgress.currentUrl}
+              </span>
+            </div>
+            <ProgressBar value={progressPercent} size="sm" />
+          </Card>
+        </motion.div>
       )}
 
       {/* Tabs */}
-      <div className="flex gap-4 mb-6">
-        {(['overview', 'documents', 'graph', 'sessions'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
-          >
-            {tab === 'overview' && <FileText size={18} />}
-            {tab === 'documents' && <BookOpen size={18} />}
-            {tab === 'graph' && <BarChart3 size={18} />}
-            {tab === 'sessions' && <RotateCcw size={18} />}
-            {tab === 'overview' && 'Overview'}
-            {tab === 'documents' && 'Documents'}
-            {tab === 'graph' && 'Knowledge Graph'}
-            {tab === 'sessions' && `Crawl Sessions (${sessions.length})`}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={tabDefinitions}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        className={styles.tabs}
+      />
 
+      {/* Tab Content */}
       {activeTab === 'overview' && (
-        <div className="grid grid-3">
-          <div className="stat-card">
-            <div className="stat-value">{sessions.length}</div>
-            <div className="stat-label">Crawl Sessions</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{totalPages}</div>
-            <div className="stat-label">Pages Discovered</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">
+        <motion.div
+          className={styles.statsGrid}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <Card className={styles.statCard}>
+            <div className={styles.statValue}>{sessions.length}</div>
+            <div className={styles.statLabel}>Crawl Sessions</div>
+          </Card>
+          <Card className={styles.statCard}>
+            <div className={styles.statValue}>{totalPages}</div>
+            <div className={styles.statLabel}>Pages Discovered</div>
+          </Card>
+          <Card className={styles.statCard}>
+            <div className={styles.statValue}>
               {activeCrawlSessionId ? 'Running' : latestSession?.status || 'Idle'}
             </div>
-            <div className="stat-label">Status</div>
-          </div>
-        </div>
+            <div className={styles.statLabel}>Status</div>
+          </Card>
+        </motion.div>
       )}
 
       {activeTab === 'documents' && id && (
-        <DocumentsPanel
-          projectId={id}
-          sessions={sessions}
-        />
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <DocumentsPanel
+            projectId={id}
+            sessions={sessions}
+          />
+        </motion.div>
       )}
 
       {activeTab === 'graph' && id && (
-        <GraphExplorer projectId={id} />
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <GraphExplorer projectId={id} />
+        </motion.div>
       )}
 
       {activeTab === 'sessions' && (
-        <div className="card">
-          <h3 className="card-title mb-4">Crawl History</h3>
-          {sessions.length === 0 ? (
-            <p className="text-muted">No crawl sessions yet. Start your first crawl.</p>
-          ) : (
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Status</th>
-                    <th>Pages</th>
-                    <th>Errors</th>
-                    <th>Started</th>
-                    <th>Completed</th>
-                  </tr>
-                </thead>
-                <tbody>
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <Card className={styles.sessionsCard}>
+            <h3 className={styles.sessionsTitle}>Crawl History</h3>
+            {sessions.length === 0 ? (
+              <EmptyState
+                icon={<RotateCcw size={40} />}
+                title="No crawl sessions yet"
+                description="Start your first crawl to see session history here."
+                action={
+                  <Button
+                    icon={<Play size={16} />}
+                    onClick={handleStartCrawl}
+                    disabled={!!activeCrawlSessionId}
+                  >
+                    Start Crawl
+                  </Button>
+                }
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Pages</TableHead>
+                    <TableHead>Errors</TableHead>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Completed</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {sessions.map(session => (
-                    <tr key={session.id}>
-                      <td>
-                        <span className={`badge badge-${session.status}`}>
+                    <TableRow key={session.id}>
+                      <TableCell>
+                        <Badge
+                          variant={statusVariantMap[session.status.toUpperCase()] || 'default'}
+                          dot
+                        >
                           {session.status}
-                        </span>
-                      </td>
-                      <td>{session.pages_visited} / {session.pages_total}</td>
-                      <td>{session.errors_count}</td>
-                      <td>{session.started_at ? new Date(session.started_at).toLocaleString() : '-'}</td>
-                      <td>{session.completed_at ? new Date(session.completed_at).toLocaleString() : '-'}</td>
-                    </tr>
+                        </Badge>
+                      </TableCell>
+                      <TableCell className={styles.pagesCell}>
+                        {session.pages_visited} / {session.pages_total}
+                      </TableCell>
+                      <TableCell>{session.errors_count}</TableCell>
+                      <TableCell className={styles.dateCell}>
+                        {session.started_at ? new Date(session.started_at).toLocaleString() : '-'}
+                      </TableCell>
+                      <TableCell className={styles.dateCell}>
+                        {session.completed_at ? new Date(session.completed_at).toLocaleString() : '-'}
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                </TableBody>
+              </Table>
+            )}
+          </Card>
+        </motion.div>
       )}
     </div>
   )

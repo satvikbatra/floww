@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: floww
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,12 +22,60 @@ services:
     image: redis:7-alpine
     container_name: floww-redis
     ports:
-      - "6381:6379"
+      - "6382:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
 
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: floww-backend
+    ports:
+      - "8100:8100"
+    environment:
+      NODE_ENV: production
+      PORT: 8100
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/floww
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-in-production}
+      DISABLE_AUTH: "false"
+      CORS_ORIGINS: http://localhost,http://localhost:80,http://localhost:4000
+      STORAGE_PATH: /app/backend/storage
+      ARCHIVE_PATH: /app/backend/archive_storage
+      GRAPH_PATH: /app/backend/graph_storage
+      OUTPUT_PATH: /app/backend/storage/output
+      REDIS_URL: redis://redis:6379
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - backend_storage:/app/backend/storage
+      - archive_storage:/app/backend/archive_storage
+      - graph_storage:/app/backend/graph_storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - production
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: floww-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    profiles:
+      - production
+
 volumes:
   postgres_data:
+  backend_storage:
+  archive_storage:
+  graph_storage:

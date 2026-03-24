@@ -1,490 +1,283 @@
 # Floww - Autonomous SaaS Documentation Generator
 
-> **🚀 Production-Ready TypeScript Stack**  
-> Enterprise-grade AI-powered documentation automation with stealth crawling, knowledge graphs, and intelligent workflow detection.
+Floww autonomously explores SaaS web applications and generates comprehensive end-user documentation with screenshots, AI analysis, workflow detection, and multi-language support.
 
-**Floww** autonomously explores SaaS web applications and generates comprehensive end-user documentation with screenshots, field explanations, workflow guides, and multi-language support.
-
-## 🎯 The Problem
-
-Modern SaaS applications have 50-500 screens with complex workflows. Creating end-user documentation requires:
-- Manually navigating each screen
-- Capturing screenshots
-- Documenting fields and their purposes
-- Describing workflows step-by-step
-- Translating to multiple languages
-
-**This takes weeks and costs $10k-$100k+ per product.**
-
-## ✨ The Solution
-
-Floww automates this entirely:
+## How It Works
 
 ```
-Your SaaS App → Floww AI Agent → Complete Documentation
+Your SaaS App → Floww Crawler Engine → AI Analysis → Complete Documentation
 ```
 
-**What Floww does:**
-1. **Autonomously explores** your application like a real user
-2. **Detects all screens** and unique pages (even in SPAs)
-3. **Captures screenshots** with smart annotations
-4. **Understands UI elements** using GPT-4 Vision + Claude
-5. **Detects workflows** and business processes
-6. **Generates documentation** in Markdown, HTML, PDF
-7. **Translates** to multiple languages
+1. **Crawls** your application like a real user (handles SPAs, auth, popups)
+2. **Archives** every page — HTML snapshots + full-page screenshots
+3. **Builds** a knowledge graph of pages, forms, buttons, workflows
+4. **Analyzes** screenshots with GPT-4 Vision / Claude to understand UI purpose
+5. **Generates** documentation in Markdown or HTML with embedded screenshots
 
-## 🚀 Quick Start
+## Architecture
 
-### Prerequisites
-- **Node.js 20+**
-- **PostgreSQL** (or SQLite for quick testing)
-- Optional: **Redis** (for background workers)
-- Optional: **OpenAI API Key** or **Anthropic API Key** (for AI features)
+```
+floww/                          # npm workspaces monorepo
+├── crawler-engine/             # @floww/crawler-engine — standalone npm package
+│   └── src/
+│       ├── browser/            # Playwright automation (17 modules)
+│       │   ├── browser-pool.ts         # Multi-browser management
+│       │   ├── stealth.ts              # 11 anti-bot detection patches
+│       │   ├── page-handler.ts         # Navigation, SPA detection, extraction
+│       │   ├── spa-navigator.ts        # Route discovery by DOM + clicking
+│       │   ├── cdp-session.ts          # Chrome DevTools Protocol sessions
+│       │   ├── accessibility-tree.ts   # AX tree extraction via CDP
+│       │   ├── dom-indexer.ts          # Indexed element mapping for LLMs
+│       │   ├── visibility-filter.ts    # Paint-order occlusion detection
+│       │   ├── watchdog.ts             # Event-driven popup/banner/challenge monitors
+│       │   ├── cookie-banner.ts        # Auto-dismiss consent banners
+│       │   ├── popup-dismisser.ts      # Auto-close modals/overlays
+│       │   ├── challenge-handler.ts    # Cloudflare/DDoS-Guard/Sucuri
+│       │   ├── session-guard.ts        # Auth session validation
+│       │   ├── resource-blocker.ts     # Block fonts/media/trackers
+│       │   ├── form-submitter.ts       # Submit GET forms for discovery
+│       │   └── content-extractor.ts    # Shadow DOM, iframes, pagination
+│       ├── pipeline/           # Content processing chain
+│       │   ├── processors/
+│       │   │   ├── html-cleaner.ts     # Strip scripts/styles/ads
+│       │   │   ├── markdown-converter.ts
+│       │   │   ├── metadata-extractor.ts
+│       │   │   ├── screenshot-capture.ts
+│       │   │   ├── link-extractor.ts
+│       │   │   └── dom-enricher.ts     # CDP accessibility + indexed DOM
+│       │   └── content-pipeline.ts
+│       ├── strategy/           # Navigation & dedup
+│       │   ├── navigation.ts           # DEPTH_ONLY / SAME_DOMAIN / FULL
+│       │   ├── similarity.ts           # URL pattern + content fingerprinting
+│       │   ├── robots.ts / sitemap.ts
+│       │   └── redirect-guard.ts
+│       ├── queue/              # Request management
+│       ├── hooks/              # Lifecycle hooks (beforeNavigate, afterProcess, etc.)
+│       ├── stats/              # Crawl statistics + error tracking
+│       ├── scaling/            # CPU/memory autoscaler
+│       ├── session/            # Cookie/proxy session pool
+│       ├── retry/              # Exponential backoff retry
+│       └── crawler.ts          # FlowwCrawler — main orchestrator
+│
+├── backend/                    # Hono API server
+│   └── src/
+│       ├── modules/
+│       │   ├── auth/           # JWT register/login/refresh
+│       │   ├── projects/       # Project CRUD + stats
+│       │   ├── crawl/          # Start/stop/status + CrawlerService wrapper
+│       │   ├── archive/        # Snapshot listing, timeline, compare
+│       │   ├── graph/          # Knowledge graph nodes/edges/workflows
+│       │   ├── documents/      # Generate/list/download documentation
+│       │   └── analysis/       # AI analysis trigger + results
+│       ├── services/
+│       │   ├── ai/             # OpenAI + Anthropic LLM clients
+│       │   ├── archive/        # HTML + screenshot storage on disk
+│       │   ├── graph/          # Graphology knowledge graph
+│       │   ├── documents/      # Markdown/HTML doc generator
+│       │   ├── events/         # WebSocket event manager
+│       │   ├── interactive/    # Browser UI for login/captcha prompts
+│       │   ├── monitoring/     # Prometheus metrics
+│       │   └── metering/       # Usage tracking
+│       ├── middleware/         # Auth, CORS, rate limiting
+│       └── prisma/            # PostgreSQL schema
+│
+├── frontend/                   # React 18 + Vite
+│   └── src/
+│       ├── pages/              # ProjectList, ProjectCreate, ProjectDetail,
+│       │                       # GraphExplorer, ArchiveBrowser
+│       ├── components/         # InteractiveCrawlBanner/Dialog, Toast, etc.
+│       └── hooks/              # API + WebSocket hooks
+│
+├── docker-compose.yml          # PostgreSQL + Redis + backend + frontend
+├── .github/workflows/ci.yml    # GitHub Actions: typecheck → test → build → docker
+└── .dockerignore
+```
 
-### Installation
+## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/juspay/floww.git
-cd floww
+# 1. Start infrastructure
+docker compose up -d    # PostgreSQL (5433) + Redis (6381)
 
-# Setup backend
+# 2. Install dependencies (npm workspaces)
+npm install
+
+# 3. Setup database
 cd backend
-npm install
-cp .env.example .env
-# Edit .env with your configuration
-
-# Setup database
-npm run db:generate
-npm run db:push
-
-# Install Playwright browsers
+cp .env.example .env    # Edit DATABASE_URL, JWT_SECRET
+npx prisma generate
+npx prisma db push
 npx playwright install chromium
+cd ..
 
-# Start backend server
-npm run dev
+# 4. Build crawler engine
+cd crawler-engine && npm run build && cd ..
 
-# Backend runs on http://localhost:8000
+# 5. Run
+cd backend && npm run dev       # API on :8000
+cd frontend && npm run dev      # UI on :4000 (separate terminal)
 ```
 
-### Run Frontend (Optional)
-```bash
-cd ../frontend
-npm install
-npm run dev
+Open http://localhost:4000
 
-# Frontend runs on http://localhost:5173
-```
+## Tech Stack
 
-### Basic Usage
+| Layer | Technology |
+|-------|-----------|
+| **Crawler Engine** | TypeScript, Playwright, Chrome DevTools Protocol, Zod |
+| **Backend** | Hono, Prisma (PostgreSQL), JWT, BullMQ, Zod |
+| **Frontend** | React 18, Vite, React Router, D3, vis-network |
+| **AI** | OpenAI GPT-4 Vision, Anthropic Claude |
+| **Graph** | Graphology |
+| **Infrastructure** | Docker, GitHub Actions, nginx |
 
-#### Option 1: REST API
-```bash
-# Health check
-curl http://localhost:8000/health
+## API Endpoints
 
-# Create a project
-curl -X POST http://localhost:8000/api/v1/projects \
-  -H "Content-Type: application/json" \
-  -d '{"name":"My App","baseUrl":"https://your-app.com"}'
+All endpoints under `/api/v1/`. Auth required unless noted.
 
-# Start crawling
-curl -X POST http://localhost:8000/api/v1/projects/{id}/crawl/start
-
-# Check status
-curl http://localhost:8000/api/v1/projects/{id}/crawl/status
-
-# Generate docs
-curl -X POST http://localhost:8000/api/v1/projects/{id}/documents/generate \
-  -H "Content-Type: application/json" \
-  -d '{"format":"markdown"}'
-```
-
-#### Option 2: CLI (Coming Soon)
-```bash
-# Initialize project
-npm run cli -- init --url https://your-app.com --name "My App"
-
-# Validate config
-npm run cli -- validate
-
-# Check status
-npm run cli -- status
-```
-
-## 🎯 Features
-
-### 🤖 Autonomous Exploration
-- Navigates your app like a real user
-- Discovers all pages and screens
-- Handles SPAs (React, Vue, Angular, Next.js)
-- Smart page fingerprinting to avoid duplicates
-- **Stealth mode** - evades bot detection
-- **🆕 Interactive crawling** - Opens browser window for user actions (login, forms, CAPTCHA)
-- **🆕 Smart navigation** - Only goes deeper from base URL, focuses on features  
-- **🆕 Similarity detection** - Prevents repetitive crawling (saves 80-90% time!)
-
-### 🔐 Authentication
-- Auto-login with credentials
-- Session cookie injection
-- Multi-strategy support (email/password, OAuth, session)
-- Auth state detection
-- **🆕 Visual browser prompts** - Beautiful popups for user interaction
-
-### 📸 Screenshot Capture
-- Full-page screenshots
-- Element-specific captures  
-- Automatic annotation and highlighting
-- Annotated screenshots with labels
-
-### 🧠 AI Understanding (GPT-4 + Claude)
-- Vision models analyze screenshots
-- Text models interpret DOM structure
-- Detects field purposes and relationships
-- Identifies business workflows
-- AI-enhanced documentation generation
-
-### 📊 Knowledge Graph
-- Builds complete application graph
-- Tracks page relationships
-- Workflow detection
-- Export to JSON/Graphology format
-- **🆕 Optimized graphs** - Filters repetitive patterns automatically
-
-### 📝 Multi-Format Output
-- Markdown documentation
-- Static HTML sites
-- PDF documents (coming soon)
-- Word documents (coming soon)
-
-### 🌍 Multi-Language
-- Automatic translation via AI
-- 50+ languages supported
-- Maintains markdown formatting
-
-### 🚀 Background Processing
-- BullMQ-based job queue
-- Redis-powered workers
-- Parallel crawling
-- Progress tracking
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                FLOWW SYSTEM (TypeScript)                │
-├─────────────────────────────────────────────────────────┤
-│  API Layer (Hono Framework)                             │
-│  ├── REST API Endpoints                                 │
-│  ├── Authentication Middleware                          │
-│  └── WebSocket (Coming Soon)                            │
-├─────────────────────────────────────────────────────────┤
-│  Browser Automation (Playwright)                        │
-│  ├── Stealth Browser (Anti-bot detection)               │
-│  ├── Auth Handler (Auto-login)                          │
-│  ├── Screenshot Capture (Annotated)                     │
-│  └── Navigator with human-like behavior                 │
-├─────────────────────────────────────────────────────────┤
-│  UI Extraction & Analysis                               │
-│  ├── DOM Parser                                         │
-│  ├── Form/Button/Link Extractor                         │
-│  ├── Accessibility Tree Parser                          │
-│  └── Element Position Tracking                          │
-├─────────────────────────────────────────────────────────┤
-│  AI/LLM Integration                                     │
-│  ├── OpenAI GPT-4 Vision                                │
-│  ├── Anthropic Claude (with Vision)                     │
-│  ├── Page Purpose Analyzer                              │
-│  ├── Workflow Detector                                  │
-│  └── Multi-language Translator                          │
-├─────────────────────────────────────────────────────────┤
-│  Knowledge Graph (Graphology)                           │
-│  ├── Node: Pages, Elements, Forms, Buttons              │
-│  ├── Edges: Navigation, Contains, Submits               │
-│  ├── Workflow Detection                                 │
-│  └── Export/Visualization                               │
-├─────────────────────────────────────────────────────────┤
-│  Archive System (Wayback Machine style)                 │
-│  ├── HTML Snapshot Storage                              │
-│  ├── Screenshot Archives                                │
-│  ├── Timeline View                                      │
-│  └── Diff Engine                                        │
-├─────────────────────────────────────────────────────────┤
-│  Documentation Generator                                │
-│  ├── AI-Enhanced Markdown                               │
-│  ├── HTML with Styling                                  │
-│  ├── Translation Support                                │
-│  └── Screenshot Integration                             │
-├─────────────────────────────────────────────────────────┤
-│  Background Workers (BullMQ + Redis)                    │
-│  ├── Crawl Queue                                        │
-│  ├── Graph Building Queue                               │
-│  ├── Documentation Queue                                │
-│  └── Retry Logic & Progress Tracking                    │
-└─────────────────────────────────────────────────────────┘
-```
-
-## ⚙️ Configuration
-
-### Environment Variables (.env)
-
-```bash
-# Required
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/floww"
-# or SQLite: DATABASE_URL="file:./dev.db"
-
-JWT_SECRET="your-super-secret-jwt-key-min-32-characters-long"
-PORT=8000
-NODE_ENV=development
-
-# Development (disable auth for testing)
-DISABLE_AUTH=true
-
-# CORS
-CORS_ORIGINS="http://localhost:5173,http://127.0.0.1:5173"
-
-# Storage Paths
-STORAGE_PATH="./storage"
-ARCHIVE_PATH="./archive_storage"
-GRAPH_PATH="./graph_storage"
-SCREENSHOT_PATH="./storage/screenshots"
-OUTPUT_PATH="./storage/output"
-
-# Optional: AI Features (at least one for AI-powered docs)
-OPENAI_API_KEY="sk-..."
-ANTHROPIC_API_KEY="sk-ant-..."
-LLM_PROVIDER="openai"  # or "anthropic"
-
-# Optional: Background Workers (requires Redis)
-REDIS_URL="redis://localhost:6379"
-```
-
-### Project Configuration (floww.yaml)
-
-```yaml
-name: "My SaaS Documentation"
-baseUrl: "https://app.example.com"
-
-auth:
-  type: email_password  # or "session", "oauth", "none"
-  email: admin@example.com
-  password: ${AUTH_PASSWORD}
-  loginUrl: https://app.example.com/login
-
-scope:
-  maxDepth: 5
-  maxPages: 100
-  excludePatterns:
-    - "/admin/*"
-    - "/api/*"
-  includePatterns:
-    - "/dashboard/*"
-    - "/users/*"
-    - "/app/*"
-  followExternalLinks: false
-
-output:
-  formats:
-    - markdown
-    - html
-  outputDir: ./docs
-  includeScreenshots: true
-  includeWorkflows: true
-
-screenshot: true
-rateLimit: 1.0
-headless: true
-```
-
-## 💻 Tech Stack
-
-### Backend (TypeScript)
-- **Framework**: Hono (lightweight, fast)
-- **Database**: Prisma ORM (PostgreSQL/SQLite)
-- **Auth**: JWT + bcrypt
-- **Browser**: Playwright
-- **AI**: OpenAI + Anthropic SDKs
-- **Graph**: Graphology
-- **Queue**: BullMQ + Redis
-- **Validation**: Zod
-
-### Frontend (React + TypeScript)
-- **Framework**: React 18 + Vite
-- **UI**: Tailwind CSS
-- **State**: React Query
-- **Routing**: React Router
-- **Charts**: Recharts
-
-### Infrastructure
-- **Database**: PostgreSQL (prod) / SQLite (dev)
-- **Cache/Queue**: Redis (optional)
-- **Container**: Docker + Docker Compose
-- **Monitoring**: Prometheus + Grafana (optional)
-
-## 📂 Project Structure
-
-```
-floww/
-├── backend/              # TypeScript Backend
-│   ├── src/
-│   │   ├── config/       # Environment config
-│   │   ├── db/           # Prisma client
-│   │   ├── middleware/   # Auth, CORS, logging
-│   │   ├── modules/      # API routes
-│   │   │   ├── auth/
-│   │   │   ├── projects/
-│   │   │   ├── crawl/    # Crawler service
-│   │   │   ├── archive/
-│   │   │   ├── graph/
-│   │   │   └── documents/
-│   │   ├── services/     # Business logic
-│   │   │   ├── ai/       # LLM clients
-│   │   │   ├── archive/  # Snapshot storage
-│   │   │   ├── browser/  # Playwright, stealth, auth
-│   │   │   ├── extraction/ # DOM parser
-│   │   │   ├── graph/    # Knowledge graph
-│   │   │   ├── documents/ # Doc generator
-│   │   │   ├── interactive/ # Human-in-the-loop
-│   │   │   └── queue/    # Background workers
-│   │   ├── types/        # Zod schemas
-│   │   ├── utils/        # Helpers
-│   │   ├── cli.ts        # CLI interface
-│   │   └── index.ts      # Main server
-│   ├── prisma/
-│   │   └── schema.prisma # Database schema
-│   └── package.json
-├── frontend/             # React Frontend
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── hooks/
-│   │   └── types/
-│   └── package.json
-├── storage/              # Generated data
-├── archive_storage/      # Wayback-style archives
-├── graph_storage/        # Knowledge graphs
-└── docs/                 # Documentation output
-```
-
-## 🧪 API Endpoints
+### Auth
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/auth/register` | Create account |
+| POST | `/auth/login` | Get JWT token |
+| POST | `/auth/refresh` | Refresh token |
+| GET | `/auth/me` | Current user |
 
 ### Projects
-- `POST /api/v1/projects` - Create project
-- `GET /api/v1/projects` - List projects
-- `GET /api/v1/projects/:id` - Get project
-- `PUT /api/v1/projects/:id` - Update project
-- `DELETE /api/v1/projects/:id` - Delete project
-- `GET /api/v1/projects/:id/stats` - Get statistics
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/projects` | Create project |
+| GET | `/projects` | List projects |
+| GET | `/projects/:id` | Get project |
+| PATCH | `/projects/:id` | Update project |
+| DELETE | `/projects/:id` | Delete project |
+| GET | `/projects/:id/stats` | Crawl/doc/snapshot counts |
 
 ### Crawling
-- `POST /api/v1/projects/:id/crawl/start` - Start crawl
-- `GET /api/v1/projects/:id/crawl/status` - Get status
-- `POST /api/v1/projects/:id/crawl/cancel` - Cancel crawl
-- `GET /api/v1/projects/:id/crawl/sessions` - List sessions
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/projects/:id/crawl` | Start crawl |
+| GET | `/projects/:id/crawl` | List sessions |
+| GET | `/projects/:id/crawl/:sid` | Session status |
+| POST | `/projects/:id/crawl/:sid/cancel` | Cancel crawl |
 
 ### Archive
-- `GET /api/v1/projects/:id/archive/snapshots` - List snapshots
-- `GET /api/v1/projects/:id/archive/timeline` - Get timeline
-- `GET /api/v1/projects/:id/archive/compare` - Compare versions
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/projects/:id/archive/snapshots` | List snapshots |
+| GET | `/projects/:id/archive/snapshots/:sid` | Get snapshot |
+| GET | `/projects/:id/archive/timeline/:urlHash` | URL version history |
+| POST | `/projects/:id/archive/compare` | Compare snapshots |
 
 ### Knowledge Graph
-- `GET /api/v1/projects/:id/graph/export` - Export graph
-- `GET /api/v1/projects/:id/graph/stats` - Graph statistics
-- `GET /api/v1/projects/:id/graph/nodes` - Get nodes
-- `GET /api/v1/projects/:id/graph/workflows` - Detected workflows
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/projects/:id/graph/nodes` | Get nodes |
+| GET | `/projects/:id/graph/edges` | Get edges |
+| GET | `/projects/:id/graph/workflows` | Detected workflows |
+| GET | `/projects/:id/graph/visualization` | Full graph export |
 
-### Documentation
-- `POST /api/v1/projects/:id/documents/generate` - Generate docs
-- `GET /api/v1/projects/:id/documents` - List documents
-- `POST /api/v1/projects/:id/documents/translate` - Translate
+### Documents
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/projects/:id/documents` | Generate docs (async) |
+| GET | `/projects/:id/documents` | List documents |
+| GET | `/projects/:id/documents/:did/content` | Download document |
 
-## 🚀 Deployment
+### Analysis
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/projects/:id/analyze` | Start AI analysis |
+| GET | `/projects/:id/analyze/status` | Analysis progress |
+| GET | `/projects/:id/analyze/results` | Analysis results |
 
-### Docker
-```bash
-docker-compose up -d
+### WebSocket
 ```
+ws://localhost:8100/api/v1/ws/crawl/{sessionId}?token=JWT
+```
+Events: `crawl:started`, `crawl:progress`, `crawl:completed`, `page:visited`, `interaction:required`
+
+## Crawler Engine Features
+
+The crawler engine (`@floww/crawler-engine`) is a standalone npm package usable independently:
+
+```typescript
+import { FlowwCrawler, CrawlEvent } from '@floww/crawler-engine'
+
+const crawler = new FlowwCrawler({
+  maxPages: 100,
+  maxDepth: 5,
+  strategy: 'same_domain',
+  useStealth: true,
+  enableEnrichedDOM: true,   // CDP accessibility tree + indexed elements
+  enableWatchdogs: true,     // Reactive popup/banner/challenge monitoring
+  processors: ['link-extractor', 'metadata', 'screenshot', 'dom-enricher'],
+})
+
+crawler.on(CrawlEvent.PAGE_CRAWLED, (result) => {
+  console.log(`Crawled: ${result.pageData.title}`)
+  console.log(`Enriched DOM: ${result.enrichedDOM}`)  // [1]<button>Sign Up</button> ...
+})
+
+crawler.onObstacleDetected(async (ctx) => {
+  console.log(`Obstacle: ${ctx.obstacle.type} at ${ctx.obstacle.pageUrl}`)
+  ctx.skip()  // or handle login/captcha
+})
+
+await crawler.crawl('https://your-app.com')
+```
+
+### Key capabilities
+- **Stealth mode** — 11 anti-detection patches (WebGL, plugins, navigator, etc.)
+- **SPA navigation** — discovers routes via DOM inspection, framework detection (Next.js/Vue/Angular), and exploratory clicking
+- **CDP enriched DOM** — accessibility tree merging, indexed element mapping (`[1]<button>Submit</button>`), paint-order visibility filtering
+- **Watchdog system** — event-driven background monitors for popups, cookie banners, security challenges, DOM mutations, soft navigations
+- **Content similarity** — URL pattern dedup + content fingerprinting saves 80-90% crawl time
+- **Hook system** — beforeNavigate, afterNavigate, beforeProcess, afterProcess, obstacleDetected
+
+## Environment Variables
+
+```env
+# Required
+DATABASE_URL="postgresql://postgres:postgres@localhost:5433/floww"
+JWT_SECRET="your-secret-key-at-least-32-characters-long"
+
+# Optional
+PORT=8000                          # Default: 8000
+DISABLE_AUTH=true                  # Skip JWT auth in development
+CORS_ORIGINS="http://localhost:4000"
+OPENAI_API_KEY="sk-..."           # For AI analysis + doc generation
+ANTHROPIC_API_KEY="sk-ant-..."    # Alternative AI provider
+REDIS_URL="redis://localhost:6381" # For persistent queue
+```
+
+## Deployment
+
+### Docker (production)
+
+```bash
+# Start everything including app containers
+docker compose --profile production up -d
+```
+
+This starts: PostgreSQL, Redis, backend (`:8000`), frontend (`:80` via nginx).
 
 ### Manual
-```bash
-# Build backend
-cd backend
-npm run build
-npm start
 
-# Build frontend
-cd frontend
-npm run build
-# Serve dist/ with nginx or any static server
+```bash
+npm run build                     # Build all packages
+cd backend && npm start           # Node.js server on :8000
+cd frontend && npx vite preview   # Preview built frontend
 ```
 
-## 📊 Roadmap
+## Tests
 
-### ✅ Phase 1: Foundation (COMPLETE)
-- [x] TypeScript migration
-- [x] REST API with authentication
-- [x] Playwright crawler with stealth
-- [x] DOM extraction & analysis
-- [x] Screenshot capture with annotations
-- [x] Knowledge graph builder
-- [x] Basic documentation generator
-- [x] Archive system (Wayback-style)
+```bash
+cd crawler-engine && npm test     # 87 tests across 9 suites
+```
 
-### 🚧 Phase 2: AI Enhancement (IN PROGRESS)
-- [x] LLM integration (OpenAI + Anthropic)
-- [x] Vision model screenshot analysis
-- [x] AI-powered documentation
-- [x] Multi-language translation
-- [ ] Interactive GUI refinement
-- [ ] WebSocket real-time updates
+Covers: navigation strategies, similarity detection, queue management, retry logic, hook system, pipeline processors, config validation, statistics, redirect guard.
 
-### 📅 Phase 3: Enterprise Features
-- [ ] PDF export (Puppeteer)
-- [ ] Word export (.docx)
-- [ ] Confluence integration
-- [ ] Notion integration
-- [ ] Multi-tenant support
-- [ ] SSO integration
-- [ ] Webhook notifications
-- [ ] Custom extractors (plugin system)
+## License
 
-### 🔮 Phase 4: Advanced
-- [ ] API documentation from Swagger/OpenAPI
-- [ ] Database schema documentation
-- [ ] Code documentation from repos
-- [ ] Video walkthrough generation
-- [ ] Interactive demos (Storylane-style)
-
-## 🏆 Competitive Advantages
-
-| Feature | Floww | Scribe | Tango | Guidde |
-|---------|-------|--------|-------|--------|
-| **Autonomous exploration** | ✅ Full | ❌ | ❌ | ❌ |
-| **SPA support** | ✅ Complete | ⚠️ Partial | ⚠️ Partial | ⚠️ Partial |
-| **Stealth mode** | ✅ | ❌ | ❌ | ❌ |
-| **Self-hosted** | ✅ | ❌ | ❌ | ❌ |
-| **Open source** | ✅ | ❌ | ❌ | ❌ |
-| **Multi-format** | ✅ MD/HTML/PDF | ⚠️ Limited | ⚠️ Limited | ❌ Video only |
-| **Multi-language** | ✅ AI-powered | ✅ | ✅ | ✅ |
-| **Knowledge graph** | ✅ | ❌ | ❌ | ❌ |
-| **API-first** | ✅ | ❌ | ❌ | ❌ |
-| **Background workers** | ✅ BullMQ | N/A | N/A | N/A |
-| **Cost** | Free + API costs | $29+/mo | $20+/mo | $16+/mo |
-
-## 📝 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please read our Contributing Guide for details.
-
-## 📧 Support
-
-- **Issues**: [GitHub Issues](https://github.com/juspay/floww/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/juspay/floww/discussions)
-- **Email**: support@floww.dev
-
----
-
-**Built with TypeScript ❤️ by the Floww Team**
+MIT

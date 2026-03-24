@@ -1,11 +1,11 @@
 /**
  * Interactive Crawl Dialog Component
- * 
+ *
  * Shows real-time user interaction prompts during crawling
  */
 
 import React, { useState, useEffect } from 'react'
-import './InteractiveCrawlDialog.css'
+import styles from './InteractiveCrawlDialog.module.css'
 
 export interface InteractionPrompt {
   id: string
@@ -46,7 +46,7 @@ export const InteractiveCrawlDialog: React.FC<InteractiveCrawlDialogProps> = ({
 
   // WebSocket connection
   useEffect(() => {
-    const ws = new WebSocket(`ws://localhost:8000/api/v1/ws/crawl/${sessionId}`)
+    const ws = new WebSocket(`ws://localhost:8100/api/v1/ws/crawl/${sessionId}`)
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
@@ -82,11 +82,11 @@ export const InteractiveCrawlDialog: React.FC<InteractiveCrawlDialogProps> = ({
     if (!currentPrompt) return
 
     onAction(currentPrompt.id, action)
-    
+
     // Move to next prompt
     const nextPrompts = prompts.filter((p) => p.id !== currentPrompt.id)
     setPrompts(nextPrompts)
-    
+
     if (nextPrompts.length > 0) {
       setCurrentPrompt(nextPrompts[0])
       setCountdown(Math.floor(nextPrompts[0].timeout / 1000))
@@ -98,12 +98,12 @@ export const InteractiveCrawlDialog: React.FC<InteractiveCrawlDialogProps> = ({
 
   const getIcon = (type: string) => {
     switch (type) {
-      case 'login': return '🔐'
-      case 'form': return '📝'
-      case 'captcha': return '🤖'
-      case '2fa': return '🔑'
-      case 'confirmation': return '✓'
-      default: return '⚠️'
+      case 'login': return '\uD83D\uDD10'
+      case 'form': return '\uD83D\uDCDD'
+      case 'captcha': return '\uD83E\uDD16'
+      case '2fa': return '\uD83D\uDD11'
+      case 'confirmation': return '\u2713'
+      default: return '\u26A0\uFE0F'
     }
   }
 
@@ -116,22 +116,22 @@ export const InteractiveCrawlDialog: React.FC<InteractiveCrawlDialogProps> = ({
   if (!isVisible || !currentPrompt) return null
 
   return (
-    <div className="interactive-dialog-overlay">
-      <div className="interactive-dialog">
-        <div className="dialog-header">
-          <div className="header-icon">{getIcon(currentPrompt.type)}</div>
-          <div className="header-content">
+    <div className={styles.overlay}>
+      <div className={styles.dialog}>
+        <div className={styles.header}>
+          <div className={styles.headerIcon}>{getIcon(currentPrompt.type)}</div>
+          <div className={styles.headerContent}>
             <h2>User Action Required</h2>
-            <p className="header-subtitle">{currentPrompt.type.toUpperCase()}</p>
+            <p className={styles.headerSubtitle}>{currentPrompt.type.toUpperCase()}</p>
           </div>
-          <div className="header-countdown">
-            <svg className="countdown-circle" width="48" height="48">
+          <div className={styles.headerCountdown}>
+            <svg className={styles.countdownCircle} width="48" height="48">
               <circle
                 cx="24"
                 cy="24"
                 r="20"
                 fill="none"
-                stroke="#e5e7eb"
+                stroke="rgba(255,255,255,0.2)"
                 strokeWidth="4"
               />
               <circle
@@ -139,7 +139,7 @@ export const InteractiveCrawlDialog: React.FC<InteractiveCrawlDialogProps> = ({
                 cy="24"
                 r="20"
                 fill="none"
-                stroke="#667eea"
+                stroke="#fff"
                 strokeWidth="4"
                 strokeDasharray={`${2 * Math.PI * 20}`}
                 strokeDashoffset={`${
@@ -149,23 +149,23 @@ export const InteractiveCrawlDialog: React.FC<InteractiveCrawlDialogProps> = ({
                 transform="rotate(-90 24 24)"
               />
             </svg>
-            <span className="countdown-text">{formatTime(countdown)}</span>
+            <span className={styles.countdownText}>{formatTime(countdown)}</span>
           </div>
         </div>
 
-        <div className="dialog-body">
-          <div className="page-info">
+        <div className={styles.body}>
+          <div className={styles.pageInfo}>
             <strong>Page:</strong> {currentPrompt.pageTitle}
             <br />
             <small>{currentPrompt.pageUrl}</small>
           </div>
 
-          <div className="message-box">
-            <div className="message-icon">💬</div>
+          <div className={styles.messageBox}>
+            <div className={styles.messageIcon}>{'\uD83D\uDCAC'}</div>
             <p>{currentPrompt.message}</p>
           </div>
 
-          <div className="instruction-box">
+          <div className={styles.instructionBox}>
             <h3>What to do:</h3>
             <ol>
               <li>A browser window has opened automatically</li>
@@ -175,30 +175,30 @@ export const InteractiveCrawlDialog: React.FC<InteractiveCrawlDialogProps> = ({
           </div>
 
           {prompts.length > 1 && (
-            <div className="queue-info">
-              <span className="badge">{prompts.length - 1} more prompts waiting</span>
+            <div className={styles.queueInfo}>
+              <span className={styles.badge}>{prompts.length - 1} more prompts waiting</span>
             </div>
           )}
         </div>
 
-        <div className="dialog-footer">
+        <div className={styles.footer}>
           <button
-            className="btn btn-primary"
+            className={`${styles.btn} ${styles.btnPrimary}`}
             onClick={() => handleAction('continue')}
           >
-            ✓ Continue Crawling
+            &#x2713; Continue Crawling
           </button>
           <button
-            className="btn btn-secondary"
+            className={`${styles.btn} ${styles.btnSecondary}`}
             onClick={() => handleAction('skip')}
           >
-            ⏭ Skip This Page
+            &#x23ED; Skip This Page
           </button>
           <button
-            className="btn btn-danger"
+            className={`${styles.btn} ${styles.btnDanger}`}
             onClick={() => handleAction('cancel')}
           >
-            ✕ Stop Crawling
+            &#x2715; Stop Crawling
           </button>
         </div>
       </div>

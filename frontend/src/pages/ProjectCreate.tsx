@@ -1,12 +1,16 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import { ArrowLeft, ChevronDown } from 'lucide-react'
 import { createProject } from '../hooks/useApi'
+import { Card, Button, Input } from '../components/ui'
+import { slideUp } from '../styles/animations'
+import styles from './ProjectCreate.module.css'
 
 const ProjectCreate: React.FC = () => {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -37,124 +41,191 @@ const ProjectCreate: React.FC = () => {
       navigate(`/projects/${response.data.id}`)
     } catch (error: any) {
       console.error('Failed to create project:', error)
-      alert(error.response?.data?.error || 'Failed to create project')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div>
-      <div className="page-header">
-        <Link to="/projects" className="btn btn-secondary">
-          <ArrowLeft size={20} />
-          Back to Projects
+    <motion.div
+      className={styles.page}
+      variants={slideUp}
+      initial="hidden"
+      animate="visible"
+    >
+      {/* Header */}
+      <div className={styles.header}>
+        <Link to="/projects">
+          <Button variant="ghost" icon={<ArrowLeft size={16} />}>
+            Back to Projects
+          </Button>
         </Link>
       </div>
 
-      <div className="card max-w-2xl mx-auto">
-        <h2 className="card-title mb-6">Create New Project</h2>
+      {/* Form Card */}
+      <Card className={styles.formCard}>
+        <h1 className={styles.formTitle}>Create New Project</h1>
+        <p className={styles.formSubtitle}>
+          Set up a new documentation project
+        </p>
 
         <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label htmlFor="name">Project Name *</label>
-            <input
-              type="text"
-              id="name"
+          <div className={styles.formBody}>
+            {/* Project Name */}
+            <Input
+              label="Project Name"
               value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, name: e.target.value })
+              }
               placeholder="My Documentation Project"
               required
             />
-          </div>
 
-          <div className="form-group">
-            <label htmlFor="description">Description</label>
-            <textarea
-              id="description"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              placeholder="Describe your project..."
-              rows={3}
-            />
-          </div>
+            {/* Description (textarea) */}
+            <div className={styles.textareaWrapper}>
+              <label htmlFor="description" className={styles.textareaLabel}>
+                Description
+              </label>
+              <textarea
+                id="description"
+                className={styles.textarea}
+                value={formData.description}
+                onChange={(e) =>
+                  setFormData({ ...formData, description: e.target.value })
+                }
+                placeholder="Describe your project..."
+                rows={3}
+              />
+            </div>
 
-          <div className="form-group">
-            <label htmlFor="baseUrl">Base URL *</label>
-            <input
+            {/* Base URL */}
+            <Input
+              label="Base URL"
               type="url"
-              id="baseUrl"
               value={formData.baseUrl}
-              onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, baseUrl: e.target.value })
+              }
               placeholder="https://example.com"
               required
+              helper="The starting URL for the crawler"
             />
-            <small className="text-muted">The starting URL for the crawler</small>
-          </div>
 
-          <div className="grid grid-2 gap-4">
-            <div className="form-group">
-              <label htmlFor="maxPages">Max Pages</label>
-              <input
-                type="number"
-                id="maxPages"
-                value={formData.maxPages}
-                onChange={(e) => setFormData({ ...formData, maxPages: parseInt(e.target.value) })}
-                min="1"
-                max="10000"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="maxDepth">Max Depth</label>
-              <input
-                type="number"
-                id="maxDepth"
-                value={formData.maxDepth}
-                onChange={(e) => setFormData({ ...formData, maxDepth: parseInt(e.target.value) })}
-                min="1"
-                max="10"
-              />
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label>
-              <input
-                type="checkbox"
-                checked={formData.respectRobotsTxt}
-                onChange={(e) => setFormData({ ...formData, respectRobotsTxt: e.target.checked })}
-              />
-              {' '}Respect robots.txt
-            </label>
-          </div>
-
-          <div className="form-group">
-            <label>
-              <input
-                type="checkbox"
-                checked={formData.followExternalLinks}
-                onChange={(e) => setFormData({ ...formData, followExternalLinks: e.target.checked })}
-              />
-              {' '}Follow external links
-            </label>
-          </div>
-
-          <div className="flex gap-3 mt-6">
-            <button 
-              type="submit" 
-              className="btn btn-primary"
-              disabled={loading}
+            {/* Advanced Options Toggle */}
+            <button
+              type="button"
+              className={styles.advancedToggle}
+              onClick={() => setShowAdvanced(!showAdvanced)}
             >
-              {loading ? 'Creating...' : 'Create Project'}
+              Advanced Options
+              <span
+                className={`${styles.chevron} ${showAdvanced ? styles.chevronOpen : ''}`}
+              >
+                <ChevronDown size={16} />
+              </span>
             </button>
-            <Link to="/projects" className="btn btn-secondary">
-              Cancel
-            </Link>
+
+            {/* Advanced Options Content */}
+            {showAdvanced && (
+              <motion.div
+                className={styles.advancedContent}
+                variants={slideUp}
+                initial="hidden"
+                animate="visible"
+              >
+                <div className={styles.advancedGrid}>
+                  <Input
+                    label="Max Pages"
+                    type="number"
+                    value={String(formData.maxPages)}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        maxPages: parseInt(e.target.value) || 0,
+                      })
+                    }
+                    min={1}
+                    max={10000}
+                  />
+                  <Input
+                    label="Max Depth"
+                    type="number"
+                    value={String(formData.maxDepth)}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        maxDepth: parseInt(e.target.value) || 0,
+                      })
+                    }
+                    min={1}
+                    max={10}
+                  />
+                </div>
+
+                <div className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    id="respectRobotsTxt"
+                    className={styles.checkbox}
+                    checked={formData.respectRobotsTxt}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        respectRobotsTxt: e.target.checked,
+                      })
+                    }
+                  />
+                  <label
+                    htmlFor="respectRobotsTxt"
+                    className={styles.checkboxLabel}
+                  >
+                    Respect robots.txt
+                  </label>
+                </div>
+
+                <div className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    id="followExternalLinks"
+                    className={styles.checkbox}
+                    checked={formData.followExternalLinks}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        followExternalLinks: e.target.checked,
+                      })
+                    }
+                  />
+                  <label
+                    htmlFor="followExternalLinks"
+                    className={styles.checkboxLabel}
+                  >
+                    Follow external links
+                  </label>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Form Actions */}
+            <div className={styles.actions}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={loading}
+              >
+                Create Project
+              </Button>
+              <Link to="/projects">
+                <Button type="button" variant="secondary">
+                  Cancel
+                </Button>
+              </Link>
+            </div>
           </div>
         </form>
-      </div>
-    </div>
+      </Card>
+    </motion.div>
   )
 }
 

@@ -1,5 +1,10 @@
 import type { CrawlRequest } from '../types'
 
+export interface QueueSnapshot {
+  pending: CrawlRequest[]
+  seen: string[]
+}
+
 export interface IRequestQueue {
   add(request: CrawlRequest): Promise<boolean> // false if already exists (dedup)
   addMany(requests: CrawlRequest[]): Promise<number> // returns count added
@@ -13,4 +18,8 @@ export interface IRequestQueue {
   has(url: string): Promise<boolean>
   clear(): Promise<void>
   close(): Promise<void>
+
+  // Optional: checkpoint support
+  serialize?(): Promise<QueueSnapshot>
+  restore?(snapshot: QueueSnapshot): Promise<void>
 }

@@ -1,18 +1,38 @@
 import React, { useState } from 'react'
-import { Calendar, Clock, GitCompare, Search } from 'lucide-react'
-import { getSnapshots, getTimeline, getArchiveStats } from '../hooks/useApi'
+import { motion } from 'framer-motion'
+import { Search, Archive } from 'lucide-react'
+import { getSnapshots } from '../hooks/useApi'
+import {
+  Card,
+  Button,
+  Badge,
+  SearchInput,
+  Input,
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+  Skeleton,
+  EmptyState,
+} from '../components/ui'
+import { slideUp } from '../styles/animations'
 import type { PageSnapshot } from '../types'
+import styles from './ArchiveBrowser.module.css'
 
 const ArchiveBrowser: React.FC = () => {
   const [projectId, setProjectId] = useState('')
   const [snapshots, setSnapshots] = useState<PageSnapshot[]>([])
   const [loading, setLoading] = useState(false)
   const [searchUrl, setSearchUrl] = useState('')
+  const [searched, setSearched] = useState(false)
 
   const handleSearch = async () => {
     if (!projectId) return
-    
+
     setLoading(true)
+    setSearched(true)
     try {
       const response = await getSnapshots(projectId, searchUrl || undefined)
       setSnapshots(response.data.snapshots || [])
@@ -24,95 +44,138 @@ const ArchiveBrowser: React.FC = () => {
   }
 
   return (
-    <div>
-      <div className="page-header">
-        <h2>Archive Browser</h2>
-        <p>Browse and compare archived page snapshots</p>
+    <motion.div
+      className={styles.page}
+      variants={slideUp}
+      initial="hidden"
+      animate="visible"
+    >
+      {/* Header */}
+      <div className={styles.header}>
+        <h1 className={styles.title}>Archive Browser</h1>
+        <p className={styles.subtitle}>
+          Browse and compare archived page snapshots
+        </p>
       </div>
 
-      <div className="card p-6 mb-6">
-        <div className="flex gap-4">
-          <div className="form-group flex-1">
-            <label className="form-label">Project ID</label>
-            <input
-              type="text"
+      {/* Search / Filter Bar */}
+      <Card>
+        <div className={styles.filterBar}>
+          <div className={styles.filterField}>
+            <Input
+              label="Project ID"
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
               placeholder="Enter project ID"
-              className="form-input"
             />
           </div>
-          <div className="form-group flex-1">
-            <label className="form-label">URL Filter (optional)</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={searchUrl}
-                onChange={(e) => setSearchUrl(e.target.value)}
-                placeholder="Filter by URL"
-                className="form-input"
-              />
-              <button 
-                onClick={handleSearch}
-                className="btn btn-primary"
-                disabled={loading || !projectId}
-              >
-                <Search size={18} />
-                Search
-              </button>
+          <div className={styles.filterField}>
+            <SearchInput
+              value={searchUrl}
+              onChange={setSearchUrl}
+              placeholder="Filter by URL..."
+            />
+          </div>
+          <div className={styles.searchButton}>
+            <Button
+              variant="primary"
+              icon={<Search size={16} />}
+              onClick={handleSearch}
+              disabled={loading || !projectId}
+              loading={loading}
+            >
+              Search
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Loading Skeleton */}
+      {loading && (
+        <div className={styles.skeletonTable}>
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className={styles.skeletonRow}>
+              <Skeleton variant="text" width="30%" height={20} />
+              <Skeleton variant="text" width="20%" height={20} />
+              <Skeleton variant="text" width="10%" height={20} />
+              <Skeleton variant="text" width="15%" height={20} />
+              <Skeleton variant="text" width="10%" height={20} />
+              <Skeleton variant="text" width="8%" height={20} />
             </div>
-          </div>
+          ))}
         </div>
-      </div>
+      )}
 
-      {snapshots.length > 0 && (
-        <div className="card">
-          <h3 className="card-title mb-4">
+      {/* Results Table */}
+      {!loading && snapshots.length > 0 && (
+        <motion.div
+          className={styles.resultsSection}
+          variants={slideUp}
+          initial="hidden"
+          animate="visible"
+        >
+          <h2 className={styles.resultsTitle}>
             Snapshots ({snapshots.length})
-          </h3>
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>URL</th>
-                  <th>Title</th>
-                  <th>Type</th>
-                  <th>Captured</th>
-                  <th>Status</th>
-                  <th>Resources</th>
-                </tr>
-              </thead>
-              <tbody>
-                {snapshots.map(snapshot => (
-                  <tr key={snapshot.id}>
-                    <td>
-                      <code className="text-sm">{snapshot.url.substring(0, 50)}...</code>
-                    </td>
-                    <td>{snapshot.title}</td>
-                    <td>
-                      <span className="badge">{snapshot.snapshot_type}</span>
-                    </td>
-                    <td>{new Date(snapshot.captured_at).toLocaleString()}</td>
-                    <td>
-                      <span className={`badge badge-${snapshot.http_status === 200 ? 'success' : 'error'}`}>
-                        {snapshot.http_status}
+          </h2>
+          <Card padding="none">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>URL</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Captured</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Resources</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {snapshots.map((snapshot) => (
+                  <TableRow key={snapshot.id}>
+                    <TableCell>
+                      <span
+                        className={styles.urlCell}
+                        title={snapshot.url}
+                      >
+                        {snapshot.url}
                       </span>
-                    </td>
-                    <td>{snapshot.resource_count}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell>{snapshot.title}</TableCell>
+                    <TableCell>
+                      <Badge variant="default">{snapshot.snapshot_type}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {new Date(snapshot.captured_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          snapshot.http_status === 200 ? 'success' : 'error'
+                        }
+                      >
+                        {snapshot.http_status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{snapshot.resource_count}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </TableBody>
+            </Table>
+          </Card>
+        </motion.div>
       )}
 
-      {!loading && snapshots.length === 0 && projectId && (
-        <div className="card p-8 text-center">
-          <p className="text-muted">No snapshots found. Run a crawl to create archives.</p>
+      {/* Empty State */}
+      {!loading && snapshots.length === 0 && searched && (
+        <div className={styles.emptyWrapper}>
+          <EmptyState
+            icon={<Archive size={48} />}
+            title="No snapshots found"
+            description="Run a crawl to create archives, or adjust your search filters."
+          />
         </div>
       )}
-    </div>
+    </motion.div>
   )
 }
 

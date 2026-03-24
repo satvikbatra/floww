@@ -1,11 +1,11 @@
 /**
  * Interactive Crawl Banner - Floating banner that shows when waiting for user input
- * 
+ *
  * Always visible when crawl needs input, with prominent Continue button
  */
 
 import React, { useEffect, useState } from 'react'
-import './InteractiveCrawlBanner.css'
+import styles from './InteractiveCrawlBanner.module.css'
 
 interface InteractiveCrawlBannerProps {
   sessionId: string
@@ -26,7 +26,7 @@ export const InteractiveCrawlBanner: React.FC<InteractiveCrawlBannerProps> = ({
 
   useEffect(() => {
     // Connect to WebSocket to listen for interaction events
-    const ws = new WebSocket(`ws://localhost:8000/api/v1/ws/crawl/${sessionId}`)
+    const ws = new WebSocket(`ws://localhost:8100/api/v1/ws/crawl/${sessionId}`)
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
@@ -67,45 +67,45 @@ export const InteractiveCrawlBanner: React.FC<InteractiveCrawlBannerProps> = ({
   if (!isWaiting) return null
 
   return (
-    <div className="crawl-banner-overlay">
-      <div className="crawl-banner">
-        <div className="banner-content">
-          <div className="banner-icon">
-            <div className="pulse-dot"></div>
-            <span className="icon-emoji">🖥️</span>
+    <div className={styles.overlay}>
+      <div className={styles.banner}>
+        <div className={styles.content}>
+          <div className={styles.iconWrapper}>
+            <div className={styles.pulseDot}></div>
+            <span className={styles.iconEmoji}>&#x1F5A5;&#xFE0F;</span>
           </div>
-          <div className="banner-text">
-            <h3 className="banner-title">⏸️ Waiting for Your Input</h3>
-            <p className="banner-message">{message}</p>
+          <div className={styles.text}>
+            <h3 className={styles.title}>&#x23F8;&#xFE0F; Waiting for Your Input</h3>
+            <p className={styles.messageText}>{message}</p>
             {pageUrl && (
-              <p className="banner-url">
-                <small>{pageUrl}</small>
+              <p className={styles.url}>
+                <small className={styles.urlCode}>{pageUrl}</small>
               </p>
             )}
-            <div className="banner-instructions">
-              <p>✓ Complete the action in the browser window that opened</p>
-              <p>✓ Then click "Continue Crawling" below</p>
+            <div className={styles.instructions}>
+              <p>&#x2713; Complete the action in the browser window that opened</p>
+              <p>&#x2713; Then click "Continue Crawling" below</p>
             </div>
           </div>
         </div>
-        <div className="banner-actions">
-          <button 
-            onClick={handleContinue} 
-            className="banner-btn banner-btn-continue"
+        <div className={styles.actions}>
+          <button
+            onClick={handleContinue}
+            className={`${styles.btn} ${styles.btnContinue}`}
           >
-            ✓ Continue Crawling
+            &#x2713; Continue Crawling
           </button>
-          <button 
-            onClick={handleSkip} 
-            className="banner-btn banner-btn-skip"
+          <button
+            onClick={handleSkip}
+            className={`${styles.btn} ${styles.btnSkip}`}
           >
-            ⏭ Skip This Page
+            &#x23ED; Skip This Page
           </button>
-          <button 
-            onClick={handleStop} 
-            className="banner-btn banner-btn-stop"
+          <button
+            onClick={handleStop}
+            className={`${styles.btn} ${styles.btnStop}`}
           >
-            ✕ Stop Crawling
+            &#x2715; Stop Crawling
           </button>
         </div>
       </div>

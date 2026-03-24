@@ -8,7 +8,7 @@ config()
 const envSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().default('8000').transform(Number),
+  PORT: z.string().default('8100').transform(Number),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'fatal']).default('debug'),
   
   // Database

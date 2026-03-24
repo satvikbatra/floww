@@ -21,6 +21,8 @@ export const CrawlerConfigSchema = z.object({
 
   // Concurrency & scaling
   maxConcurrency: z.number().min(1).default(1),
+  maxConcurrentPerDomain: z.number().min(1).default(2),
+  delayStrategy: z.enum(['per-request', 'per-domain']).default('per-request'),
   autoscale: z.boolean().default(false),
   maxCpuPercent: z.number().min(10).max(100).default(80),
   maxMemoryPercent: z.number().min(10).max(100).default(80),
@@ -46,10 +48,44 @@ export const CrawlerConfigSchema = z.object({
   // Content pipeline
   processors: z.array(z.string()).default(['link-extractor', 'metadata', 'screenshot']),
 
-  // Session
+  // Proxy
   proxyUrl: z.string().optional(),
+  proxies: z.array(z.object({
+    url: z.string(),
+    username: z.string().optional(),
+    password: z.string().optional(),
+  })).default([]),
+  proxyRotation: z.enum(['round-robin', 'random', 'least-used']).default('round-robin'),
+  maxProxyFailures: z.number().default(3),
+
+  // Block detection
+  enableBlockDetection: z.boolean().default(false),
+  blockThreshold: z.number().default(5),
+  adaptiveThrottling: z.boolean().default(false),
+
+  // Checkpoints
+  enableCheckpoints: z.boolean().default(false),
+  checkpointIntervalPages: z.number().default(50),
+  checkpointDir: z.string().optional(),
+
+  // Session
   cookies: z.array(z.any()).optional(),
   userAgent: z.string().optional(),
+
+  // Enriched DOM (browser-use inspired CDP features)
+  enableEnrichedDOM: z.boolean().default(false),
+  enrichedDOMOptions: z.object({
+    includeNonInteractive: z.boolean().default(false),
+    maxElements: z.number().default(500),
+    filterOccluded: z.boolean().default(true),
+    maxTextLength: z.number().default(100),
+  }).default({}),
+
+  // Watchdog system
+  enableWatchdogs: z.boolean().default(false),
+  watchdogs: z.array(z.enum([
+    'popup', 'cookie-banner', 'challenge', 'dom-change', 'navigation',
+  ])).default(['popup', 'cookie-banner', 'challenge']),
 })
 
 export type CrawlerConfig = z.infer<typeof CrawlerConfigSchema>

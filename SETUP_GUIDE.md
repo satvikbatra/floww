@@ -1,399 +1,237 @@
-# Floww Setup & Testing Guide
-
-## What Floww Does
-
-Floww is an **AI-powered documentation generator** that:
-
-1. **Crawls** your web application like a user would
-2. **Archives** snapshots of every page (Wayback Machine style)
-3. **Builds** a knowledge graph of UI elements, forms, workflows
-4. **Generates** end-user documentation automatically
-
-## Architecture
-
-```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│   Frontend  │────▶│  FastAPI     │────▶│   PostgreSQL    │
-│  (React)    │     │   Backend    │     │   (Data)        │
-└─────────────┘     └──────────────┘     └─────────────────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        ▼                  ▼                  ▼
-┌──────────────┐  ┌──────────────┐  ┌─────────────────┐
-│    Redis     │  │   Celery     │  │  Archive Store  │
-│   (Queue)    │  │   Workers    │  │  (Snapshots)    │
-└──────────────┘  └──────────────┘  └─────────────────┘
-```
+# Floww Setup Guide
 
 ## Prerequisites
 
+- **Node.js 20+** (`node --version`)
+- **Docker** (for PostgreSQL + Redis)
+- **Chrome/Chromium** (Playwright will install it)
+
+## 1. Start Infrastructure
+
 ```bash
-# macOS
-brew install docker docker-compose node
-
-# Ubuntu/Debian
-sudo apt-get install docker.io docker-compose nodejs npm
-
-# Verify installations
-docker --version      # Should show 20.10+
-docker-compose version # Should show 2.x
-node --version        # Should show 18+
+cd floww
+docker compose up -d
 ```
 
-## Step 1: Start All Services
+This starts:
+- **PostgreSQL** on port `5433`
+- **Redis** on port `6381`
+
+## 2. Install Dependencies
 
 ```bash
-# Navigate to project
-cd /Users/satvik.batra/Documents/juspay/floww
-
-# Start everything (first time will build images)
-docker-compose up --build
-
-# Or run in background
-docker-compose up -d --build
+# Install all workspace dependencies from the root
+npm install
 ```
 
-**Services will be available at:**
-- Frontend: http://localhost:5173
-- API Docs: http://localhost:8000/docs
-- Grafana: http://localhost:3000 (admin/admin)
-- Prometheus: http://localhost:9090
-- Flower (Celery): http://localhost:5555
-- Neo4j: http://localhost:7474
+This installs dependencies for all three packages: `crawler-engine`, `backend`, and `frontend`.
 
-## Step 2: Create Your First Project
+## 3. Build Crawler Engine
 
-### Option A: Via Frontend (Recommended)
-
-1. Open http://localhost:5173
-2. Click "New Project"
-3. Fill in:
-   - **Name**: "My App Docs"
-   - **Base URL**: `https://example.com` (or your app)
-   - **Description**: Optional
-4. Click "Create"
-
-### Option B: Via API
+The backend depends on `@floww/crawler-engine` as a local package. Build it first:
 
 ```bash
-# Get auth token
-curl -X POST http://localhost:8000/api/v1/auth/login \
+cd crawler-engine
+npm run build
+cd ..
+```
+
+## 4. Setup Database
+
+```bash
+cd backend
+
+# Copy environment template
+cp .env.example .env
+
+# Edit .env — at minimum set:
+#   DATABASE_URL=postgresql://postgres:postgres@localhost:5433/floww
+#   JWT_SECRET=your-secret-key-at-least-32-characters-long
+#   DISABLE_AUTH=true  (for development)
+
+# Generate Prisma client
+npx prisma generate
+
+# Push schema to database
+npx prisma db push
+
+# Install Playwright browser
+npx playwright install chromium
+
+cd ..
+```
+
+## 5. Run Development Servers
+
+```bash
+# Terminal 1: Backend API (port 8000)
+cd backend && npm run dev
+
+# Terminal 2: Frontend UI (port 4000)
+cd frontend && npm run dev
+```
+
+Open **http://localhost:4000** to access the Floww UI.
+
+## 6. Verify Setup
+
+```bash
+# Health check
+curl http://localhost:8100/health
+
+# Readiness check (verifies DB connection)
+curl http://localhost:8100/readyz
+```
+
+## Using Floww
+
+### Create a Project
+
+**Via UI:** Click "New Project" at http://localhost:4000
+
+**Via API:**
+```bash
+curl -X POST http://localhost:8100/api/v1/projects \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@floww.dev","password":"admin123"}'
+  -d '{"name": "My App", "baseUrl": "https://example.com"}'
+```
 
-# Create project
-curl -X POST http://localhost:8000/api/v1/projects \
+### Start a Crawl
+
+**Via UI:** Open your project → click "Start Crawl"
+
+**Via API:**
+```bash
+curl -X POST http://localhost:8100/api/v1/projects/{PROJECT_ID}/crawl \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{
-    "name": "My App",
-    "base_url": "https://example.com",
-    "config": {
-      "max_pages": 50,
-      "output_formats": ["markdown", "html"]
-    }
-  }'
+  -d '{"config": {"maxPages": 50, "maxDepth": 3}}'
 ```
 
-## Step 3: Start Crawling
+### What Happens During a Crawl
 
-### From Frontend
+1. Backend creates a `CrawlSession` in the database
+2. `@floww/crawler-engine` launches Playwright with stealth patches
+3. The crawler opens a visible browser window (headless: false by default)
+4. **First page prompt**: the browser shows a floating panel — complete any login/setup, then click "Continue Crawling"
+5. The crawler autonomously navigates, discovering links, SPA routes, and forms
+6. Each page is archived (HTML + screenshot saved to disk)
+7. The knowledge graph builds incrementally
+8. Progress events stream to the frontend via WebSocket
 
-1. Go to your project
-2. Click "Start Crawl" button
-3. Watch progress in real-time via WebSocket
+### Monitor Progress
 
-### From API
+- **Frontend**: real-time progress bar + page list on the project detail page
+- **WebSocket**: connect to `ws://localhost:8100/api/v1/ws/crawl/{sessionId}`
+- **Metrics**: `GET /metrics` (Prometheus format)
+
+### Generate Documentation
+
+After crawling completes:
+
+**Via UI:** Click "Generate Documentation" on the project page
+
+**Via API:**
+```bash
+curl -X POST http://localhost:8100/api/v1/projects/{PROJECT_ID}/documents \
+  -H "Content-Type: application/json" \
+  -d '{"title": "My App Docs", "format": "MARKDOWN"}'
+```
+
+Download the generated document:
+```bash
+curl http://localhost:8100/api/v1/projects/{PROJECT_ID}/documents/{DOC_ID}/content \
+  -o documentation.md
+```
+
+### AI-Enhanced Documentation
+
+Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in `backend/.env` to enable:
+- Screenshot analysis (page purpose, target users, UI element descriptions)
+- Workflow detection across pages
+- Multi-language translation
+
+Run AI analysis:
+```bash
+curl -X POST http://localhost:8100/api/v1/projects/{PROJECT_ID}/analyze
+```
+
+Then regenerate documentation — it will include AI insights.
+
+## Interactive Crawling
+
+When the crawler encounters obstacles:
+
+| Obstacle | Behavior |
+|----------|----------|
+| **Login form** | Shows floating panel in browser — enter credentials, click Continue |
+| **CAPTCHA** | Pauses, notifies frontend via WebSocket |
+| **Cookie banner** | Auto-dismissed (17 platform-specific + text-based patterns) |
+| **Popups/modals** | Auto-closed (close button, escape, backdrop click) |
+| **Cloudflare challenge** | Waits up to 30s for challenge to pass |
+
+## Production Deployment
+
+### Docker (recommended)
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/projects/{PROJECT_ID}/crawl \
-  -H "Authorization: Bearer YOUR_TOKEN"
+# Build and start all services
+docker compose --profile production up -d --build
 ```
 
-**What happens during crawl:**
-1. Celery worker launches browser (Playwright)
-2. Navigates to base URL
-3. Discovers links and forms
-4. Takes screenshots
-5. Saves HTML + resources
-6. Builds knowledge graph
-7. Generates documentation
+Services:
+- **Frontend**: http://localhost:80 (nginx + SPA routing)
+- **Backend**: http://localhost:8100 (Node.js + Playwright)
+- **PostgreSQL**: internal (port 5432)
+- **Redis**: internal (port 6379)
 
-## Step 4: Monitor Progress
+### Environment Variables for Production
 
-### Real-time (Flower)
+```env
+NODE_ENV=production
+DATABASE_URL=postgresql://user:pass@postgres:5432/floww
+JWT_SECRET=<long-random-string>
+DISABLE_AUTH=false
+CORS_ORIGINS=https://your-domain.com
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+REDIS_URL=redis://redis:6379
+```
 
-Open http://localhost:5555 to see:
-- Active tasks
-- Task success/failure rates
-- Worker status
-- Queue depth
-
-### Metrics (Grafana)
-
-Open http://localhost:3000
-
-**Key dashboards to create:**
-
-1. **Request Rate**
-   ```promql
-   rate(http_requests_total[5m])
-   ```
-
-2. **Crawl Progress**
-   ```promql
-   crawl_pages_total
-   ```
-
-3. **Queue Depth**
-   ```promql
-   celery_queue_length
-   ```
-
-## Step 5: View Results
-
-### Knowledge Graph
-
-1. In frontend, go to your project
-2. Click "Knowledge Graph" tab
-3. Interactive visualization shows:
-   - Pages (blue boxes)
-   - Forms (green hexagons)
-   - Buttons (orange circles)
-   - Links (cyan dots)
-   - Navigation (pink stars)
-
-### Archive Timeline
-
-1. Click "Archive Browser"
-2. View historical snapshots
-3. Compare versions
-4. See visual diffs
-
-### Generated Documentation
-
-Check `./docs/{project_id}/` for:
-- `README.md` - Site overview
-- `pages/*.md` - Individual page docs
-- `workflows/*.md` - User workflows
-
-## Testing on Real Applications
-
-### Test 1: Simple Static Site
+## Running Tests
 
 ```bash
-# Use httpbin.org for testing
-curl -X POST http://localhost:8000/api/v1/projects \
-  -H "Authorization: Bearer TOKEN" \
-  -d '{
-    "name": "HTTPBin Test",
-    "base_url": "https://httpbin.org",
-    "config": {
-      "max_pages": 10,
-      "max_depth": 2
-    }
-  }'
-```
-
-**Expected:** Should crawl forms, tables, headers
-
-### Test 2: React/Vue SPA
-
-```json
-{
-  "name": "SPA Test",
-  "base_url": "https://demo.react.example.com",
-  "config": {
-    "spa_mode": true,
-    "wait_for_networkidle": true,
-    "max_pages": 20
-  }
-}
-```
-
-**Expected:** Should detect route changes, capture dynamic content
-
-### Test 3: E-commerce Site
-
-```json
-{
-  "name": "E-commerce Docs",
-  "base_url": "https://demo.ecommerce.example.com",
-  "config": {
-    "include_patterns": ["/products", "/cart", "/checkout"],
-    "exclude_patterns": ["/admin", "/api"],
-    "stealth_mode": true
-  }
-}
-```
-
-**Expected:** Should capture product pages, cart flow, checkout
-
-## Interactive Mode (Handling Obstacles)
-
-When Floww encounters:
-- **Login forms** → Pauses, asks for credentials
-- **CAPTCHA** → Pauses, asks for solution
-- **Unknown forms** → Asks for sample data
-
-**Example interaction:**
-```
-Crawler paused at: https://example.com/login
-Type: login_form
-Fields: ["username", "password"]
-
-Floww: "Please provide login credentials or skip?"
-You: Enter credentials in web UI
-Floww: Resumes crawl with authenticated session
+cd crawler-engine
+npm test        # 87 tests, ~2s
 ```
 
 ## Troubleshooting
 
-### Issue: Crawler stops immediately
+### Backend won't start: "Cannot find module '@floww/crawler-engine'"
+→ Build the crawler engine first: `cd crawler-engine && npm run build`
 
-**Check:**
-```bash
-# View logs
-docker-compose logs -f celery-worker
+### Prisma errors
+→ Run `cd backend && npx prisma generate && npx prisma db push`
 
-# Common fixes:
-# 1. Check if site blocks bots
-curl -I https://example.com/robots.txt
+### Browser crashes during crawl
+→ Ensure Playwright browsers are installed: `cd backend && npx playwright install chromium`
+→ Reduce concurrency: set `maxBrowsers: 1` in crawl config
 
-# 2. Enable stealth mode in config
-{"stealth_mode": true}
+### No pages discovered
+→ Check if the site blocks bots — enable stealth mode (on by default)
+→ Check robots.txt: `curl https://target-site.com/robots.txt`
+→ Increase delay: `"delayMs": 2000`
 
-# 3. Check if site requires auth
-# Add credentials in web UI
-```
+### WebSocket not connecting
+→ Frontend hardcodes `ws://localhost:8100` — ensure backend is running on port 8000
+→ Check browser console for WebSocket errors
 
-### Issue: No pages discovered
+## Project File Locations
 
-**Check:**
-```bash
-# Verify crawler can access site
-docker-compose exec api curl https://example.com
-
-# Check rate limiting
-# Increase delay: {"delay_ms": 2000}
-```
-
-### Issue: Graph is empty
-
-**Check:**
-```bash
-# View crawler logs
-docker-compose logs celery-worker | grep "graph"
-
-# Ensure pages have content
-ls -la archive_storage/{project_id}/
-```
-
-## Advanced Configuration
-
-### Custom Selectors
-
-```json
-{
-  "config": {
-    "custom_selectors": {
-      "navigation": "nav.main-menu",
-      "content": "article.main-content",
-      "ignore": ".ads, .cookie-banner"
-    }
-  }
-}
-```
-
-### Authentication
-
-**Option 1: Session Cookies**
-```json
-{
-  "config": {
-    "cookies": {
-      "session_id": "abc123",
-      "auth_token": "xyz789"
-    }
-  }
-}
-```
-
-**Option 2: Basic Auth**
-```json
-{
-  "config": {
-    "auth": {
-      "type": "basic",
-      "username": "admin",
-      "password": "secret"
-    }
-  }
-}
-```
-
-**Option 3: OAuth**
-Use browser extension to capture authenticated session
-
-## Performance Tuning
-
-### For Large Sites (1000+ pages)
-
-```json
-{
-  "config": {
-    "max_pages": 1000,
-    "max_depth": 5,
-    "concurrency": 4,
-    "delay_ms": 500,
-    "batch_size": 50
-  }
-}
-```
-
-### Resource Limits
-
-```bash
-# In docker-compose.yml, add to celery-worker:
-deploy:
-  resources:
-    limits:
-      cpus: '2'
-      memory: 4G
-```
-
-## Next Steps
-
-1. **Customize Documentation Templates**
-   - Edit `src/floww/graph/doc_generator.py`
-   - Modify markdown templates
-
-2. **Add Custom Extractors**
-   - Extend `GraphBuilder` class
-   - Extract domain-specific elements
-
-3. **Integrate LLM**
-   - Add OpenAI/Anthropic API keys
-   - Enable AI-generated descriptions
-
-4. **Production Deployment**
-   - Use managed PostgreSQL
-   - Set up Redis Cluster
-   - Deploy to Kubernetes
-
-## Quick Reference
-
-| Command | Description |
-|---------|-------------|
-| `docker-compose up` | Start all services |
-| `docker-compose logs -f api` | View API logs |
-| `docker-compose logs -f celery-worker` | View worker logs |
-| `docker-compose ps` | List running containers |
-| `docker-compose down` | Stop all services |
-| `docker-compose down -v` | Stop and remove volumes |
-
-## Support
-
-- API Docs: http://localhost:8000/docs
-- Metrics: http://localhost:8000/metrics
-- Health: http://localhost:8000/health
+| What | Where |
+|------|-------|
+| Database schema | `backend/prisma/schema.prisma` |
+| API routes | `backend/src/modules/*/routes.ts` |
+| Crawler config | `crawler-engine/src/config.ts` |
+| Archived pages | `backend/archive_storage/{projectId}/{urlHash}/{timestamp}/` |
+| Generated docs | `backend/storage/output/documents/{projectId}/` |
+| Knowledge graphs | `backend/graph_storage/{projectId}/graph.json` |

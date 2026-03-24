@@ -39,6 +39,7 @@ export interface CrawlResult {
   screenshot?: Buffer
   markdown?: string
   metadata: Record<string, any>
+  enrichedDOM?: string
   processedAt: Date
 }
 
@@ -72,4 +73,53 @@ export interface ObstacleInfo {
   pageUrl: string
   pageTitle: string
   message: string
+}
+
+// ── Enriched DOM (browser-use inspired) ─────────────────────────
+
+export interface AXNodeInfo {
+  role: string
+  name: string
+  description: string
+  states: string[]
+  value?: string
+  backendDOMNodeId: number
+}
+
+export interface EnrichedElement {
+  index: number
+  tagName: string
+  role: string
+  name: string
+  description: string
+  states: string[]
+  boundingBox: { x: number; y: number; width: number; height: number } | null
+  isVisible: boolean
+  isInteractive: boolean
+  selector: string
+  backendNodeId: number
+  attributes: Record<string, string>
+  innerText: string
+  children: number[]
+  parentIndex?: number
+}
+
+export interface IndexedDOM {
+  elements: EnrichedElement[]
+  textRepresentation: string
+  stats: {
+    totalElements: number
+    interactiveElements: number
+    visibleElements: number
+    filteredElements: number
+  }
+}
+
+// ── Watchdog system ─────────────────────────────────────────────
+
+export interface WatchdogEvent {
+  watchdog: string
+  type: string
+  timestamp: number
+  data: Record<string, any>
 }

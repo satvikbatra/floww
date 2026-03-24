@@ -25,7 +25,9 @@ export class ContentPipeline {
         context = await processor.process(context)
       } catch (error) {
         console.warn(`Processor "${processor.name}" failed:`, error)
-        // Continue with next processor — don't let one failure break the pipeline
+        // Track failure but continue pipeline
+        if (!context.metadata._failedProcessors) context.metadata._failedProcessors = []
+        context.metadata._failedProcessors.push(processor.name)
       }
     }
 

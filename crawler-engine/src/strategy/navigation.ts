@@ -157,12 +157,15 @@ export class URLNavigator {
     }
 
     return this.config.excludePatterns.some(pattern => {
-      if (pattern.startsWith('/') && pattern.endsWith('/')) {
-        // Regex pattern
-        const regex = new RegExp(pattern.slice(1, -1));
-        return regex.test(url);
-      } else {
-        // Simple string match
+      try {
+        if (pattern.startsWith('/') && pattern.endsWith('/')) {
+          const regex = new RegExp(pattern.slice(1, -1));
+          return regex.test(url);
+        } else {
+          return url.includes(pattern);
+        }
+      } catch {
+        // Invalid regex pattern — treat as simple string match
         return url.includes(pattern);
       }
     });
@@ -178,12 +181,15 @@ export class URLNavigator {
     }
 
     return this.config.includePatterns.some(pattern => {
-      if (pattern.startsWith('/') && pattern.endsWith('/')) {
-        // Regex pattern
-        const regex = new RegExp(pattern.slice(1, -1));
-        return regex.test(url);
-      } else {
-        // Simple string match
+      try {
+        if (pattern.startsWith('/') && pattern.endsWith('/')) {
+          const regex = new RegExp(pattern.slice(1, -1));
+          return regex.test(url);
+        } else {
+          return url.includes(pattern);
+        }
+      } catch {
+        // Invalid regex pattern — treat as simple string match
         return url.includes(pattern);
       }
     });

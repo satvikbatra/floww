@@ -1,5 +1,5 @@
 import type { CrawlRequest } from '../types'
-import type { IRequestQueue } from './queue-interface'
+import type { IRequestQueue, QueueSnapshot } from './queue-interface'
 import { normalizeUrl } from './request'
 
 /**
@@ -73,5 +73,20 @@ export class MemoryQueue implements IRequestQueue {
 
   async close(): Promise<void> {
     // no-op for memory queue
+  }
+
+  async serialize(): Promise<QueueSnapshot> {
+    return {
+      pending: [...this.pending],
+      seen: Array.from(this.seen),
+    }
+  }
+
+  async restore(snapshot: QueueSnapshot): Promise<void> {
+    this.pending = [...snapshot.pending]
+    this.seen = new Set(snapshot.seen)
+    this.handled.clear()
+    this.failed.clear()
+    this.pending.sort((a, b) => a.priority - b.priority)
   }
 }

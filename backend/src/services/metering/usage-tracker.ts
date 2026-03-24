@@ -72,14 +72,10 @@ export async function flushUsage(): Promise<void> {
 
     apiLogger.debug('Flushing usage records', { count: aggregated.size })
 
-    // In a real implementation, this would write to a usage_events table
-    // For now, we log it for later implementation with a billing provider
-    for (const [_, usage] of aggregated) {
-      apiLogger.info('Usage event', {
-        userId: usage.userId,
-        event: usage.event,
-        quantity: usage.quantity,
-      })
+    // TODO: Write to a usage_events table when billing is implemented.
+    // Currently logs usage for audit trail only.
+    for (const [, usage] of aggregated) {
+      apiLogger.debug('Usage', { userId: usage.userId, event: usage.event, quantity: usage.quantity })
     }
   } catch (error) {
     apiLogger.error('Failed to flush usage records', error)

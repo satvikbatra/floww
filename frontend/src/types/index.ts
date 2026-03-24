@@ -73,3 +73,28 @@ export interface GraphStats {
   pages: number
   elements: number
 }
+
+export interface User {
+  id: string
+  email: string
+  username: string
+  fullName?: string
+  role: string
+  avatarUrl?: string
+  isActive: boolean
+  createdAt: string
+}
+
+export interface AuthTokens {
+  accessToken: string
+  refreshToken: string
+  tokenType: string
+  expiresIn: number
+}
+
+export interface DashboardStats {
+  totalProjects: number
+  totalPagesCrawled: number
+  activeCrawls: number
+  documentsGenerated: number
+}

@@ -6,7 +6,9 @@ export class BrowserInstance {
   private _pageCount = 0
   private _maxPages: number
   private _retired = false
+  private _inUse = false
   private _activePage: Page | null = null
+  public proxyUrl?: string
 
   constructor(context: BrowserContext, browser: Browser | null, maxPages: number) {
     this.context = context
@@ -16,6 +18,7 @@ export class BrowserInstance {
 
   get pageCount(): number { return this._pageCount }
   get isRetired(): boolean { return this._retired }
+  get inUse(): boolean { return this._inUse }
   get activePage(): Page | null { return this._activePage }
 
   /**
@@ -23,16 +26,25 @@ export class BrowserInstance {
    */
   async getPage(): Promise<Page> {
     if (!this._activePage || this._activePage.isClosed()) {
-      this._activePage = await this.context.newPage()
+      const page = await this.context.newPage()
+      this._activePage = page
+      this._pageCount++
     }
-    this._pageCount++
     return this._activePage
+  }
+
+  /**
+   * Mark this instance as acquired (in use by a worker)
+   */
+  acquire(): void {
+    this._inUse = true
   }
 
   /**
    * Release the page after use. Checks retirement threshold.
    */
   release(): void {
+    this._inUse = false
     if (this._pageCount >= this._maxPages) {
       this._retired = true
     }
@@ -42,11 +54,12 @@ export class BrowserInstance {
    * Check if this instance can accept more work
    */
   isAvailable(): boolean {
-    return !this._retired && this._pageCount < this._maxPages
+    return !this._retired && !this._inUse && this._pageCount < this._maxPages
   }
 
   async close(): Promise<void> {
     this._retired = true
+    this._inUse = false
     try {
       if (this._activePage && !this._activePage.isClosed()) {
         await this._activePage.close()

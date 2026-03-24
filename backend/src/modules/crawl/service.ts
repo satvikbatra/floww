@@ -6,7 +6,7 @@
  * - Knowledge graph building
  * - Archive storage (HTML + screenshots to disk)
  * - WebSocket event broadcasting
- * - Interactive handler (login/captcha via browser UI)
+ * - Interactive handler (login/captcha via in-page UI — no extra tabs)
  */
 
 import {
@@ -15,7 +15,6 @@ import {
   type CrawlResult,
   type CrawlSummary,
   type HookContext,
-  type ObstacleInfo,
 } from '@floww/crawler-engine'
 import { db } from '../../db/client'
 import { archiveService } from '../../services/archive/storage'
@@ -39,47 +38,59 @@ export class CrawlerService {
     return this.activeCrawlers.get(sessionId)
   }
 
+  static getActiveSessionIds(): string[] {
+    return Array.from(this.activeCrawlers.keys())
+  }
+
   async startCrawl(sessionId: string, project: Project, rawConfig: any) {
     const crawler = new FlowwCrawler({
-      maxPages: rawConfig.maxPages ?? 100,
-      maxDepth: rawConfig.maxDepth ?? 5,
-      delayMs: rawConfig.delayMs ?? 1000,
+      maxPages: rawConfig.maxPages ?? 500,
+      maxDepth: rawConfig.maxDepth ?? 10,
+      delayMs: rawConfig.delayMs ?? 800,
       strategy: rawConfig.depthOnlyMode ? 'depth_only' : 'same_domain',
-      headless: false,
+      headless: rawConfig.headless ?? false,
       useStealth: rawConfig.stealthMode !== false,
       usePersistentProfile: rawConfig.usePersistentProfile !== false,
       includePatterns: rawConfig.includePatterns || [],
       excludePatterns: rawConfig.excludePatterns || [],
-      maxSimilarUrlsPerPattern: rawConfig.maxSimilarUrlsPerPattern ?? 5,
-      contentSimilarityThreshold: rawConfig.contentSimilarityThreshold ?? 0.85,
       maxRetries: 2,
       maxErrorsBeforeStop: 20,
       respectRobotsTxt: true,
       useSitemap: true,
       processors: ['link-extractor', 'metadata', 'screenshot'],
+      // Concurrency
+      maxConcurrency: rawConfig.maxConcurrency ?? 1,
+      maxConcurrentPerDomain: rawConfig.maxConcurrentPerDomain ?? 2,
+      delayStrategy: rawConfig.delayStrategy ?? 'per-request',
+      // Proxy
+      proxies: rawConfig.proxies ?? [],
+      proxyUrl: rawConfig.proxyUrl,
+      proxyRotation: rawConfig.proxyRotation ?? 'round-robin',
+      // Block detection
+      enableBlockDetection: rawConfig.enableBlockDetection ?? false,
+      blockThreshold: rawConfig.blockThreshold ?? 5,
+      adaptiveThrottling: rawConfig.adaptiveThrottling ?? false,
+      // Checkpoints
+      enableCheckpoints: rawConfig.enableCheckpoints ?? false,
+      checkpointDir: rawConfig.checkpointDir,
     })
 
-    let interactiveHandler: BrowserInteractiveHandler | null = null
+    const interactiveHandler = new BrowserInteractiveHandler()
     const graph = await graphManager.getGraph(project.id)
     await archiveService.init()
 
-    // Hook: set up interactive handler when browser launches
-    crawler.onBrowserCreate(async (ctx: HookContext) => {
-      if (ctx.browserInstance) {
-        interactiveHandler = new BrowserInteractiveHandler(ctx.browserInstance.context)
-        interactiveHandler.on('interaction:required', async (request: any) => {
-          await wsEventManager.sendInteractionRequired(sessionId, {
-            type: request.type,
-            message: request.message,
-            pageUrl: request.pageUrl,
-          })
-        })
-      }
+    // Notify frontend when interaction is needed
+    interactiveHandler.on('interaction:required', async (request: any) => {
+      await wsEventManager.sendInteractionRequired(sessionId, {
+        type: request.type,
+        message: request.message,
+        pageUrl: request.pageUrl,
+      })
     })
 
-    // Hook: handle obstacles via interactive UI
+    // Hook: handle obstacles (login, captcha, etc.) — inject UI into the crawler's own page
     crawler.onObstacleDetected(async (ctx: HookContext) => {
-      if (!interactiveHandler || !ctx.obstacle) { ctx.skip(); return }
+      if (!ctx.obstacle) { ctx.skip(); return }
 
       const request: InteractionRequest = {
         id: crypto.randomUUID(),
@@ -90,30 +101,12 @@ export class CrawlerService {
         timeout: rawConfig.interactionTimeout ?? 300000,
       }
 
-      const response = await interactiveHandler.requestInteraction(request)
+      // Inject UI into the SAME page the crawler is on — no second tab
+      const response = await interactiveHandler.requestInteraction(ctx.page, request)
+
       if (response.action === 'cancelled') ctx.cancelCrawl()
       else if (response.action === 'skipped') ctx.skip()
-    })
-
-    // Hook: first page prompt for login/setup
-    let isFirstPage = true
-    crawler.onAfterNavigate(async (ctx: HookContext) => {
-      if (!isFirstPage || !interactiveHandler) return
-      isFirstPage = false
-
-      const title = await ctx.page.title()
-      const request: InteractionRequest = {
-        id: crypto.randomUUID(),
-        type: InteractionType.MANUAL_ACTION,
-        pageUrl: ctx.page.url(),
-        pageTitle: title,
-        message: 'First page loaded. Complete any login or setup, then click "Continue Crawling".',
-        timeout: rawConfig.interactionTimeout ?? 300000,
-      }
-
-      const response = await interactiveHandler.requestInteraction(request)
-      if (response.action === 'cancelled') ctx.cancelCrawl()
-      if (response.action === 'skipped') ctx.skip()
+      // 'completed' → crawler continues with the page as-is (user may have logged in)
     })
 
     // Event: page crawled → archive + DB + graph
@@ -143,7 +136,7 @@ export class CrawlerService {
           url: result.pageData.url,
           title: result.pageData.title,
           links: result.pageData.links,
-          forms: result.pageData.forms.map(f => ({ action: f.action, method: f.method })),
+          forms: result.pageData.forms.map((f: any) => ({ action: f.action, method: f.method })),
           buttons: result.pageData.buttons,
         })
 
@@ -202,6 +195,11 @@ export class CrawlerService {
       }).catch(() => {})
     })
 
+    // Event: block detected → log
+    crawler.on(CrawlEvent.BLOCK_DETECTED, async (signal: any) => {
+      console.warn(`Block detected on ${signal.domain}: ${signal.reason} (action: ${signal.recommendedAction})`)
+    })
+
     // Event: fatal error → DB + WS
     crawler.on(CrawlEvent.CRAWL_ERROR, async ({ error }: any) => {
       await db.crawlSession.update({
@@ -226,9 +224,7 @@ export class CrawlerService {
         data: { status: 'FAILED', completedAt: new Date(), lastError: (error as Error).message },
       }).catch(() => {})
     } finally {
-      if (interactiveHandler) {
-        await (interactiveHandler as BrowserInteractiveHandler).close().catch(() => {})
-      }
+      await interactiveHandler.close().catch(() => {})
       CrawlerService.activeCrawlers.delete(sessionId)
     }
   }

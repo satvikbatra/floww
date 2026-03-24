@@ -40,9 +40,9 @@ export class RedisQueue implements IRequestQueue {
   async init(): Promise<void> {
     await loadBullMQ()
 
-    this.dedup = new IORedis(this.redisUrl, { maxRetriesPerRequest: null })
+    this.dedup = new IORedis(this.redisUrl, { maxRetriesPerRequest: null, connectTimeout: 5000 })
     this.queue = new BullMQ.Queue(this.queueName, {
-      connection: new IORedis(this.redisUrl, { maxRetriesPerRequest: null }),
+      connection: new IORedis(this.redisUrl, { maxRetriesPerRequest: null, connectTimeout: 5000 }),
       defaultJobOptions: {
         removeOnComplete: { count: 1000 },
         removeOnFail: { count: 500 },

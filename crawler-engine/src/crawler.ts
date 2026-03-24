@@ -3,18 +3,28 @@
  *
  * Event-driven architecture: emits events, consumer handles persistence.
  * No knowledge of databases, WebSockets, or product-specific logic.
+ *
+ * Features:
+ * - Concurrent page processing (configurable maxConcurrency)
+ * - Per-domain throttling
+ * - Proxy rotation with health tracking
+ * - Blocked request detection with adaptive throttling
+ * - Checkpoint-based pause/resume
+ * - Hook system for extensibility
+ * - Pipeline-based content processing
  */
 
 import { EventEmitter } from 'events'
+import crypto from 'crypto'
 import { CrawlerConfigSchema, type CrawlerConfig } from './config'
-import type { CrawlRequest, CrawlResult, CrawlSummary, PageData, ObstacleInfo } from './types'
+import type { CrawlRequest, CrawlResult, CrawlSummary } from './types'
 import { CrawlEvent } from './events/event-types'
 import { MemoryQueue } from './queue/memory-queue'
 import { RedisQueue } from './queue/redis-queue'
 import type { IRequestQueue } from './queue/queue-interface'
 import { createRequest, normalizeUrl } from './queue/request'
 import { BrowserPool } from './browser/browser-pool'
-import { navigateAndWait, extractPageData, detectObstacle, takeScreenshot } from './browser/page-handler'
+import { navigateAndWait, extractPageData, detectObstacle } from './browser/page-handler'
 import { discoverRoutesFromDOM, discoverRoutesByClicking, scrollToLoadContent } from './browser/spa-navigator'
 import { dismissCookieBanner } from './browser/cookie-banner'
 import { dismissPopups } from './browser/popup-dismisser'
@@ -24,7 +34,7 @@ import { checkSessionStatus, detectAuthCookies } from './browser/session-guard'
 import { handleChallenge, handleMetaRefresh } from './browser/challenge-handler'
 import { extractIframeLinks, detectHashRoutes, extractCanonicalUrl, detectHreflangUrls, detectPagination } from './browser/content-extractor'
 import { RedirectGuard } from './strategy/redirect-guard'
-import { isPaginationUrl, extractCanonicalUrl as extractCanonicalFromHtml } from './queue/request'
+import { isPaginationUrl } from './queue/request'
 import { URLNavigator, NavigationStrategy } from './strategy/navigation'
 import { SimilarityDetector } from './strategy/similarity'
 import { RobotsParser } from './strategy/robots'
@@ -36,12 +46,17 @@ import { LinkExtractorProcessor } from './pipeline/processors/link-extractor'
 import { HtmlCleanerProcessor } from './pipeline/processors/html-cleaner'
 import { MarkdownProcessor } from './pipeline/processors/markdown-converter'
 import { HookManager } from './hooks/hook-manager'
-import type { HookContext, HookFn } from './hooks/types'
+import type { HookFn } from './hooks/types'
 import { CrawlStatistics } from './stats/statistics'
 import { ErrorTracker } from './stats/error-tracker'
 import { Autoscaler } from './scaling/autoscaler'
 import { RetryHandler } from './retry/retry-handler'
-import type { Page, Response } from 'playwright'
+import { DOMEnricherProcessor } from './pipeline/processors/dom-enricher'
+import { WatchdogManager, type WatchdogName } from './browser/watchdog'
+import { disposeCDPSession } from './browser/cdp-session'
+import { ProxyRotator } from './proxy/proxy-rotator'
+import { BlockDetector } from './strategy/block-detector'
+import { CheckpointManager, type CrawlCheckpoint } from './checkpoint/checkpoint'
 
 const STRATEGY_MAP: Record<string, NavigationStrategy> = {
   depth_only: NavigationStrategy.DEPTH_ONLY,
@@ -54,7 +69,7 @@ export class FlowwCrawler extends EventEmitter {
   private queue!: IRequestQueue
   private browserPool!: BrowserPool
   private navigator!: URLNavigator
-  private similarity!: SimilarityDetector
+  private _similarity!: SimilarityDetector // reserved for future re-enablement
   private robots!: RobotsParser
   private pipeline!: ContentPipeline
   private hookManager: HookManager
@@ -62,21 +77,35 @@ export class FlowwCrawler extends EventEmitter {
   private errorTracker: ErrorTracker
   private autoscaler!: Autoscaler
   private retryHandler!: RetryHandler
+  private watchdogManager: WatchdogManager | null = null
+  private proxyRotator: ProxyRotator | null = null
+  private blockDetector: BlockDetector | null = null
+  private checkpointManager: CheckpointManager | null = null
 
   private redirectGuard!: RedirectGuard
-  private canonicalUrls = new Map<string, string>() // canonical -> actual
+  private canonicalUrls = new Map<string, string>()
   private knownAuthCookies: string[] = []
-  private paginationCount = new Map<string, number>() // pattern -> count
+  private paginationCount = new Map<string, number>()
   private maxPaginationPerPattern = 10
+  private domainLastRequest = new Map<string, number>()
 
   private visited = new Set<string>()
   private cancelled = false
+  private paused = false
   private totalErrors = 0
-  private consecutiveSimilar = 0
+  private _consecutiveSimilar = 0 // reserved for future re-enablement
+  private startUrl = ''
+  private successSinceCheckpoint = 0
 
   constructor(config: Partial<CrawlerConfig>) {
     super()
     this.config = CrawlerConfigSchema.parse(config)
+
+    // Auto-adjust: maxBrowsers must be >= maxConcurrency
+    if (this.config.maxConcurrency > this.config.maxBrowsers) {
+      this.config.maxBrowsers = this.config.maxConcurrency
+    }
+
     this.hookManager = new HookManager()
     this.stats = new CrawlStatistics()
     this.errorTracker = new ErrorTracker()
@@ -96,53 +125,16 @@ export class FlowwCrawler extends EventEmitter {
    */
   async crawl(startUrl: string): Promise<CrawlSummary> {
     const startedAt = new Date()
+    this.startUrl = startUrl
     this.cancelled = false
+    this.paused = false
     this.totalErrors = 0
-    this.consecutiveSimilar = 0
+    this._consecutiveSimilar = 0
+    this.successSinceCheckpoint = 0
     this.visited.clear()
     this.stats.reset()
 
-    // Initialize subsystems
-    // Initialize queue — Redis for production, memory for dev
-    if (this.config.queueBackend === 'redis' && this.config.redisUrl) {
-      const redisQueue = new RedisQueue(this.config.redisUrl)
-      await redisQueue.init()
-      this.queue = redisQueue
-    } else {
-      this.queue = new MemoryQueue()
-    }
-    this.browserPool = new BrowserPool(this.config)
-    this.navigator = new URLNavigator({
-      strategy: STRATEGY_MAP[this.config.strategy] || NavigationStrategy.SAME_DOMAIN,
-      baseUrl: startUrl,
-      maxDepth: this.config.maxDepth,
-      includePatterns: this.config.includePatterns,
-      excludePatterns: this.config.excludePatterns,
-    })
-    this.similarity = new SimilarityDetector({
-      maxSimilarUrlsPerPattern: this.config.maxSimilarUrlsPerPattern,
-      contentSimilarityThreshold: this.config.contentSimilarityThreshold,
-    })
-    this.robots = new RobotsParser()
-    this.retryHandler = new RetryHandler(this.config.maxRetries, this.config.retryDelayMs)
-    this.redirectGuard = new RedirectGuard()
-    this.canonicalUrls.clear()
-    this.paginationCount.clear()
-    this.knownAuthCookies = []
-    this.autoscaler = new Autoscaler({
-      maxConcurrency: this.config.maxConcurrency,
-      maxCpuPercent: this.config.maxCpuPercent,
-      maxMemoryPercent: this.config.maxMemoryPercent,
-    })
-
-    // Build content pipeline
-    this.pipeline = new ContentPipeline()
-    const processorNames = new Set(this.config.processors)
-    if (processorNames.has('html-cleaner')) this.pipeline.addProcessor(new HtmlCleanerProcessor())
-    if (processorNames.has('link-extractor')) this.pipeline.addProcessor(new LinkExtractorProcessor())
-    if (processorNames.has('metadata')) this.pipeline.addProcessor(new MetadataProcessor())
-    if (processorNames.has('markdown')) this.pipeline.addProcessor(new MarkdownProcessor())
-    if (processorNames.has('screenshot')) this.pipeline.addProcessor(new ScreenshotProcessor())
+    await this.initSubsystems(startUrl)
 
     this.emit(CrawlEvent.CRAWL_STARTED, { startUrl, config: this.config })
 
@@ -174,115 +166,8 @@ export class FlowwCrawler extends EventEmitter {
       // Seed URL (highest priority)
       await this.queue.add(createRequest(startUrl, { priority: 0 }))
 
-      // === MAIN CRAWL LOOP ===
-      while (
-        !(await this.queue.isEmpty()) &&
-        this.visited.size < this.config.maxPages &&
-        !this.cancelled &&
-        this.totalErrors < this.config.maxErrorsBeforeStop
-      ) {
-        // Autoscaler check
-        if (this.config.autoscale && !this.autoscaler.canAcceptTask()) {
-          await this.delay(1000)
-          continue
-        }
-
-        const request = await this.queue.fetchNext()
-        if (!request) break
-
-        // Skip if already visited
-        if (this.visited.has(normalizeUrl(request.url))) {
-          await this.queue.markHandled(request.id)
-          continue
-        }
-
-        // Navigation strategy check
-        if (!this.navigator.shouldCrawl(request.url)) {
-          this.stats.recordSkip()
-          this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: 'navigation strategy' })
-          await this.queue.markHandled(request.id)
-          continue
-        }
-
-        // URL pattern similarity check
-        const urlCheck = this.similarity.shouldSkipUrl(request.url)
-        if (urlCheck.skip) {
-          this.stats.recordSkip()
-          this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: urlCheck.reason })
-          await this.queue.markHandled(request.id)
-          continue
-        }
-
-        // Robots.txt check
-        if (this.config.respectRobotsTxt && !this.robots.isAllowed(request.url)) {
-          this.stats.recordSkip()
-          this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: 'disallowed by robots.txt' })
-          await this.queue.markHandled(request.id)
-          continue
-        }
-
-        // Redirect loop check
-        if (this.redirectGuard.isRedirectLoop(request.url)) {
-          this.stats.recordSkip()
-          this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: 'redirect loop detected' })
-          await this.queue.markHandled(request.id)
-          continue
-        }
-
-        // Pagination cap — don't crawl more than N pages per pagination pattern
-        if (isPaginationUrl(request.url)) {
-          const pattern = request.url.replace(/\d+/g, ':n')
-          const count = this.paginationCount.get(pattern) || 0
-          if (count >= this.maxPaginationPerPattern) {
-            this.stats.recordSkip()
-            this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: `pagination cap (${this.maxPaginationPerPattern})` })
-            await this.queue.markHandled(request.id)
-            continue
-          }
-          this.paginationCount.set(pattern, count + 1)
-        }
-
-        // Diminishing returns check
-        if (this.consecutiveSimilar >= 15 && this.similarity.isDiminishingReturns()) {
-          this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: 'diminishing returns' })
-          break
-        }
-
-        // Crawl the page
-        try {
-          await this.processRequest(request)
-          await this.queue.markHandled(request.id)
-        } catch (error) {
-          const err = error instanceof Error ? error : new Error(String(error))
-          this.errorTracker.track(request.url, err, request.retryCount)
-
-          if (this.retryHandler.shouldRetry(request, err)) {
-            this.stats.recordRetry()
-            const retryReq = this.retryHandler.prepareForRetry(request)
-            await this.queue.reclaimRequest(retryReq)
-            this.emit(CrawlEvent.PAGE_FAILED, { request, error: err, willRetry: true })
-            await this.delay(this.retryHandler.getDelay(request.retryCount))
-          } else {
-            this.totalErrors++
-            this.stats.recordFailure(request.url, err)
-            await this.queue.markFailed(request.id)
-            this.emit(CrawlEvent.PAGE_FAILED, { request, error: err, willRetry: false })
-          }
-        }
-
-        // Emit progress
-        this.emit(CrawlEvent.CRAWL_PROGRESS, {
-          visited: this.visited.size,
-          total: this.config.maxPages,
-          currentUrl: request.url,
-          queueSize: await this.queue.size(),
-        })
-
-        // Delay between requests
-        if (!this.cancelled) {
-          await this.delay(this.config.delayMs)
-        }
-      }
+      // === MAIN CRAWL LOOP (concurrent) ===
+      await this.runConcurrentLoop()
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
       this.emit(CrawlEvent.CRAWL_ERROR, { error: err, fatal: true })
@@ -293,20 +178,366 @@ export class FlowwCrawler extends EventEmitter {
 
     // Build summary
     const completedAt = new Date()
+    const snapshot = this.stats.getSnapshot()
     const summary: CrawlSummary = {
-      totalRequests: this.stats.getSnapshot().totalRequests,
-      successCount: this.stats.getSnapshot().successCount,
-      failedCount: this.stats.getSnapshot().failedCount,
-      skippedCount: this.stats.getSnapshot().skippedCount,
+      totalRequests: snapshot.totalRequests,
+      successCount: snapshot.successCount,
+      failedCount: snapshot.failedCount,
+      skippedCount: snapshot.skippedCount,
       durationMs: completedAt.getTime() - startedAt.getTime(),
       pagesPerSecond: this.visited.size / Math.max(1, (completedAt.getTime() - startedAt.getTime()) / 1000),
       startedAt,
       completedAt,
-      statistics: this.stats.getSnapshot(),
+      statistics: snapshot,
     }
 
     this.emit(CrawlEvent.CRAWL_COMPLETED, summary)
     return summary
+  }
+
+  /**
+   * Resume crawling from a checkpoint
+   */
+  async resumeFromCheckpoint(checkpointDir: string, checkpointId?: string): Promise<CrawlSummary> {
+    if (!this.checkpointManager) {
+      this.checkpointManager = new CheckpointManager()
+    }
+
+    const checkpoint = await this.checkpointManager.load(checkpointDir, checkpointId)
+    if (!checkpoint) {
+      throw new Error(`No checkpoint found in ${checkpointDir}${checkpointId ? ` (id: ${checkpointId})` : ''}`)
+    }
+
+    // Restore state
+    this.visited = new Set(checkpoint.visited)
+    this.canonicalUrls = new Map(checkpoint.canonicalUrls)
+    this.paginationCount = new Map(checkpoint.paginationCount)
+    this.knownAuthCookies = checkpoint.knownAuthCookies
+    this.totalErrors = checkpoint.totalErrors
+
+    // Restore queue if available
+    if (checkpoint.queueState && this.queue && 'restore' in this.queue) {
+      await (this.queue as any).restore(checkpoint.queueState)
+    }
+
+    return this.crawl(checkpoint.startUrl)
+  }
+
+  /**
+   * Pause the crawler — saves checkpoint if enabled, then stops the loop.
+   * Returns the checkpoint ID if a checkpoint was saved.
+   */
+  async pause(): Promise<string | null> {
+    this.paused = true
+
+    if (this.config.enableCheckpoints && this.config.checkpointDir) {
+      return this.saveCheckpoint()
+    }
+    return null
+  }
+
+  /**
+   * Cancel the crawler — stops immediately without saving state.
+   */
+  async cancel(): Promise<void> {
+    this.cancelled = true
+  }
+
+  // ─── Private: Initialization ───────────────────────────────────
+
+  private async initSubsystems(startUrl: string): Promise<void> {
+    // Queue
+    if (this.config.queueBackend === 'redis' && this.config.redisUrl) {
+      const redisQueue = new RedisQueue(this.config.redisUrl)
+      await redisQueue.init()
+      this.queue = redisQueue
+    } else {
+      this.queue = new MemoryQueue()
+    }
+
+    // Proxy rotation
+    if (this.config.proxies.length > 0) {
+      this.proxyRotator = new ProxyRotator(
+        this.config.proxies,
+        this.config.proxyRotation,
+        this.config.maxProxyFailures
+      )
+    }
+
+    this.browserPool = new BrowserPool(this.config, this.proxyRotator ?? undefined)
+    this.navigator = new URLNavigator({
+      strategy: STRATEGY_MAP[this.config.strategy] || NavigationStrategy.SAME_DOMAIN,
+      baseUrl: startUrl,
+      maxDepth: this.config.maxDepth,
+      includePatterns: this.config.includePatterns,
+      excludePatterns: this.config.excludePatterns,
+    })
+    this._similarity = new SimilarityDetector({
+      maxSimilarUrlsPerPattern: this.config.maxSimilarUrlsPerPattern,
+      contentSimilarityThreshold: this.config.contentSimilarityThreshold,
+    })
+    this.robots = new RobotsParser()
+    this.retryHandler = new RetryHandler(this.config.maxRetries, this.config.retryDelayMs)
+    this.redirectGuard = new RedirectGuard()
+    this.canonicalUrls.clear()
+    this.paginationCount.clear()
+    this.domainLastRequest.clear()
+    this.knownAuthCookies = []
+
+    this.autoscaler = new Autoscaler({
+      maxConcurrency: this.config.maxConcurrency,
+      maxCpuPercent: this.config.maxCpuPercent,
+      maxMemoryPercent: this.config.maxMemoryPercent,
+    })
+
+    // Block detection
+    if (this.config.enableBlockDetection) {
+      this.blockDetector = new BlockDetector(this.config.blockThreshold)
+    }
+
+    // Checkpoints
+    if (this.config.enableCheckpoints) {
+      this.checkpointManager = new CheckpointManager()
+    }
+
+    // Content pipeline
+    this.pipeline = new ContentPipeline()
+    const processorNames = new Set(this.config.processors)
+    if (processorNames.has('html-cleaner')) this.pipeline.addProcessor(new HtmlCleanerProcessor())
+    if (processorNames.has('link-extractor')) this.pipeline.addProcessor(new LinkExtractorProcessor())
+    if (processorNames.has('metadata')) this.pipeline.addProcessor(new MetadataProcessor())
+    if (processorNames.has('markdown')) this.pipeline.addProcessor(new MarkdownProcessor())
+    if (processorNames.has('screenshot')) this.pipeline.addProcessor(new ScreenshotProcessor())
+    if (processorNames.has('dom-enricher') || this.config.enableEnrichedDOM) {
+      this.pipeline.addProcessor(new DOMEnricherProcessor(this.config.enrichedDOMOptions))
+    }
+
+    // Watchdogs
+    if (this.config.enableWatchdogs) {
+      this.watchdogManager = new WatchdogManager(this.config.watchdogs as WatchdogName[])
+    } else {
+      this.watchdogManager = null
+    }
+  }
+
+  // ─── Private: Concurrent crawl loop ────────────────────────────
+
+  private async runConcurrentLoop(): Promise<void> {
+    const activeWorkers = new Set<Promise<void>>()
+    const domainInFlight = new Map<string, number>()
+
+    const shouldContinue = () =>
+      !this.cancelled &&
+      !this.paused &&
+      this.visited.size < this.config.maxPages &&
+      this.totalErrors < this.config.maxErrorsBeforeStop
+
+    while (shouldContinue()) {
+      // Wait if at max concurrency
+      const effectiveConcurrency = this.config.autoscale
+        ? this.autoscaler.getDesiredConcurrency()
+        : this.config.maxConcurrency
+
+      if (activeWorkers.size >= effectiveConcurrency) {
+        await Promise.race(activeWorkers)
+        continue
+      }
+
+      // Autoscaler system pressure check
+      if (this.config.autoscale && !this.autoscaler.canAcceptTask()) {
+        await this.delay(1000)
+        continue
+      }
+
+      const request = await this.queue.fetchNext()
+      if (!request) {
+        // Queue empty — wait for in-flight workers to potentially enqueue more URLs
+        if (activeWorkers.size > 0) {
+          await Promise.race(activeWorkers)
+          continue
+        }
+        break // Queue empty and no workers — done
+      }
+
+      // Run preflight checks (synchronous, in main loop)
+      if (!this.passesPreflightChecks(request)) {
+        await this.queue.markHandled(request.id)
+        continue
+      }
+
+      // Domain throttling
+      const domain = this.extractDomain(request.url)
+      if (domain) {
+        const inFlight = domainInFlight.get(domain) || 0
+        if (inFlight >= this.config.maxConcurrentPerDomain) {
+          // Put it back and try another
+          await this.queue.reclaimRequest(request)
+          await this.delay(100)
+          continue
+        }
+
+        // Per-domain delay strategy
+        if (this.config.delayStrategy === 'per-domain') {
+          const lastReq = this.domainLastRequest.get(domain)
+          if (lastReq) {
+            const elapsed = Date.now() - lastReq
+            const delayMs = this.getEffectiveDelay(domain)
+            if (elapsed < delayMs) {
+              await this.queue.reclaimRequest(request)
+              await this.delay(50)
+              continue
+            }
+          }
+          this.domainLastRequest.set(domain, Date.now())
+        }
+
+        domainInFlight.set(domain, inFlight + 1)
+      }
+
+      // Eagerly mark visited BEFORE spawning worker to prevent duplicates
+      this.visited.add(normalizeUrl(request.url))
+
+      // Spawn worker
+      const worker = this.processWorker(request, domain)
+        .finally(() => {
+          activeWorkers.delete(worker)
+          if (domain) {
+            const count = domainInFlight.get(domain) || 1
+            if (count <= 1) domainInFlight.delete(domain)
+            else domainInFlight.set(domain, count - 1)
+          }
+
+          // Emit progress after each worker completes
+          this.queue.size().then(queueSize => {
+            this.emit(CrawlEvent.CRAWL_PROGRESS, {
+              visited: this.visited.size,
+              total: this.config.maxPages,
+              currentUrl: request.url,
+              queueSize,
+              activeWorkers: activeWorkers.size,
+            })
+          }).catch(() => {})
+
+          // Auto-checkpoint
+          if (
+            this.config.enableCheckpoints &&
+            this.config.checkpointDir &&
+            this.successSinceCheckpoint >= this.config.checkpointIntervalPages
+          ) {
+            this.saveCheckpoint().catch(() => {})
+          }
+        })
+
+      activeWorkers.add(worker)
+
+      // Per-request delay (only in per-request mode and sequential crawling)
+      if (this.config.delayStrategy === 'per-request' && this.config.maxConcurrency <= 1 && !this.cancelled) {
+        await this.delay(this.getEffectiveDelay(domain))
+      }
+    }
+
+    // Drain remaining workers
+    if (activeWorkers.size > 0) {
+      await Promise.all(activeWorkers)
+    }
+  }
+
+  // ─── Private: Preflight checks ────────────────────────────────
+
+  private passesPreflightChecks(request: CrawlRequest): boolean {
+    // Already visited
+    if (this.visited.has(normalizeUrl(request.url))) {
+      return false
+    }
+
+    // Navigation strategy
+    if (!this.navigator.shouldCrawl(request.url)) {
+      this.stats.recordSkip()
+      this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: 'navigation strategy' })
+      return false
+    }
+
+    // Robots.txt
+    if (this.config.respectRobotsTxt && !this.robots.isAllowed(request.url)) {
+      this.stats.recordSkip()
+      this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: 'disallowed by robots.txt' })
+      return false
+    }
+
+    // Redirect loop
+    if (this.redirectGuard.isRedirectLoop(request.url)) {
+      this.stats.recordSkip()
+      this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: 'redirect loop detected' })
+      return false
+    }
+
+    // Pagination cap
+    if (isPaginationUrl(request.url)) {
+      const pattern = request.url.replace(/\d+/g, ':n')
+      const count = this.paginationCount.get(pattern) || 0
+      if (count >= this.maxPaginationPerPattern) {
+        this.stats.recordSkip()
+        this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: `pagination cap (${this.maxPaginationPerPattern})` })
+        return false
+      }
+      this.paginationCount.set(pattern, count + 1)
+    }
+
+    // Block detection — skip blocked domains
+    if (this.blockDetector) {
+      const domain = this.extractDomain(request.url)
+      if (domain && this.blockDetector.isBlocked(domain)) {
+        this.stats.recordSkip()
+        this.emit(CrawlEvent.PAGE_SKIPPED, { request, reason: 'domain blocked' })
+        return false
+      }
+    }
+
+    return true
+  }
+
+  // ─── Private: Worker wrapper ───────────────────────────────────
+
+  private async processWorker(request: CrawlRequest, domain: string | null): Promise<void> {
+    try {
+      await this.processRequest(request)
+      await this.queue.markHandled(request.id)
+      this.successSinceCheckpoint++
+
+      // Block detection: record success
+      if (this.blockDetector && domain) {
+        this.blockDetector.recordSuccess(domain)
+        if (this.config.adaptiveThrottling) {
+          this.blockDetector.resetDelay(domain)
+        }
+      }
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error))
+      this.errorTracker.track(request.url, err, request.retryCount)
+
+      // Block detection: record failure
+      if (this.blockDetector && domain) {
+        const signal = this.blockDetector.recordFailure(domain, err.message)
+        if (signal) {
+          this.emit(CrawlEvent.BLOCK_DETECTED, signal)
+          if (this.config.adaptiveThrottling) {
+            this.blockDetector.increaseDelay(domain)
+          }
+        }
+      }
+
+      if (this.retryHandler.shouldRetry(request, err)) {
+        this.stats.recordRetry()
+        const retryReq = this.retryHandler.prepareForRetry(request)
+        await this.queue.reclaimRequest(retryReq)
+        this.emit(CrawlEvent.PAGE_FAILED, { request, error: err, willRetry: true })
+      } else {
+        this.totalErrors++
+        this.stats.recordFailure(request.url, err)
+        await this.queue.markFailed(request.id)
+        this.emit(CrawlEvent.PAGE_FAILED, { request, error: err, willRetry: false })
+      }
+    }
   }
 
   /**
@@ -320,9 +551,8 @@ export class FlowwCrawler extends EventEmitter {
 
     // First-time browser setup: resource blocking + hooks
     if (browserInstance.pageCount === 0) {
-      // Install resource blocker to speed up crawling
       await installResourceBlocker(browserInstance.context, {
-        blockImages: false, // keep for screenshots
+        blockImages: false,
         blockFonts: true,
         blockMedia: true,
         blockTrackers: true,
@@ -355,19 +585,34 @@ export class FlowwCrawler extends EventEmitter {
       })
 
       const httpStatus = response?.status() ?? 200
+      const domain = this.extractDomain(request.url)
 
-      // Handle 429 (rate limited) — back off and retry
+      // Handle 429 (rate limited)
       if (httpStatus === 429) {
         const retryAfter = response?.headers()['retry-after']
         const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 10000
         await this.delay(Math.min(waitMs, 60000))
+
+        // Record as challenge for block detection
+        if (this.blockDetector && domain) {
+          this.blockDetector.recordChallenge(domain, 'rate-limited')
+          this.stats.recordChallenge(domain)
+        }
+
         throw new Error(`Rate limited (429). Retry after ${waitMs}ms`)
       }
 
-      // Handle Cloudflare/bot challenges (wait for them to pass)
+      // Handle Cloudflare/bot challenges
       const challenge = await handleChallenge(page, { maxWaitMs: 15000 })
-      if (challenge.detected && !challenge.passed) {
-        throw new Error(`Challenge not passed: ${challenge.type}`)
+      if (challenge.detected) {
+        if (this.blockDetector && domain) {
+          const signal = this.blockDetector.recordChallenge(domain, challenge.type || 'unknown')
+          if (signal) this.emit(CrawlEvent.BLOCK_DETECTED, signal)
+          this.stats.recordChallenge(domain)
+        }
+        if (!challenge.passed) {
+          throw new Error(`Challenge not passed: ${challenge.type}`)
+        }
       }
 
       // Handle meta refresh redirects
@@ -384,26 +629,27 @@ export class FlowwCrawler extends EventEmitter {
         this.redirectGuard.recordRedirect(request.url, finalUrlAfterNav)
       }
 
-      // Dismiss cookie banners
-      await dismissCookieBanner(page)
+      // Start watchdogs
+      if (this.watchdogManager) {
+        await this.watchdogManager.startAll(page)
+      }
 
-      // Dismiss popups/modals that block content
+      // Dismiss cookie banners and popups
+      await dismissCookieBanner(page)
       await dismissPopups(page)
 
-      // Session validity check (detect if we got logged out)
+      // Session validity check
       if (this.knownAuthCookies.length > 0) {
         const sessionStatus = await checkSessionStatus(page, response, {
           knownAuthCookies: this.knownAuthCookies,
         })
         if (!sessionStatus.isValid) {
-          // Emit interaction needed for re-auth
           this.emit(CrawlEvent.INTERACTION_NEEDED, {
             type: 'login' as const,
             pageUrl: page.url(),
             pageTitle: await page.title(),
             message: `Session expired (${sessionStatus.reason}). Re-authentication needed.`,
           })
-          // Let obstacle hook handle it if registered
           if (this.hookManager.has('obstacleDetected')) {
             const ctx = HookManager.createContext(request, page)
             ctx.obstacle = {
@@ -415,7 +661,6 @@ export class FlowwCrawler extends EventEmitter {
             await this.hookManager.execute('obstacleDetected', ctx)
             if (ctx.aborted || ctx.skipped) { this.stats.recordSkip(); return }
             if (ctx.cancelled) { this.cancelled = true; return }
-            // After re-auth, learn new cookies
             this.knownAuthCookies = await detectAuthCookies(page)
           }
         }
@@ -452,7 +697,6 @@ export class FlowwCrawler extends EventEmitter {
           }
           if (obsCtx.cancelled) { this.cancelled = true; return }
         } else {
-          // No obstacle handler registered — emit event and skip
           this.emit(CrawlEvent.INTERACTION_NEEDED, obstacle)
           this.visited.add(normalizeUrl(request.url))
           this.stats.recordSkip()
@@ -471,16 +715,14 @@ export class FlowwCrawler extends EventEmitter {
       // Extract page data
       const pageData = await extractPageData(page, response)
 
-      // Canonical URL dedup — if page has a canonical that differs from current URL, skip
+      // Canonical URL dedup
       const canonical = await extractCanonicalUrl(page)
       if (canonical && normalizeUrl(canonical) !== normalizeUrl(finalUrl)) {
         const normalCanonical = normalizeUrl(canonical)
         if (this.visited.has(normalCanonical)) {
-          // Already crawled the canonical version — skip this duplicate
           this.stats.recordSkip()
           return
         }
-        // Mark canonical as the "real" URL, add it to visited
         this.canonicalUrls.set(normalCanonical, finalUrl)
       }
 
@@ -488,20 +730,6 @@ export class FlowwCrawler extends EventEmitter {
       if (this.knownAuthCookies.length === 0 && this.visited.size <= 2) {
         this.knownAuthCookies = await detectAuthCookies(page)
       }
-
-      // Content similarity check
-      const contentCheck = this.similarity.isContentSimilar(finalUrl, {
-        title: pageData.title,
-        html: pageData.html,
-        links: pageData.links,
-        forms: pageData.forms,
-      })
-      if (contentCheck.similar) {
-        this.consecutiveSimilar++
-        this.stats.recordSkip()
-        return
-      }
-      this.consecutiveSimilar = 0
 
       // Run content pipeline
       const pipelineResult = await this.pipeline.run(page, pageData)
@@ -511,6 +739,11 @@ export class FlowwCrawler extends EventEmitter {
       preProcessCtx.pageData = pageData
       await this.hookManager.execute('beforeProcess', preProcessCtx)
 
+      // Attach watchdog events
+      if (this.watchdogManager) {
+        pipelineResult.metadata.watchdogEvents = this.watchdogManager.getEvents()
+      }
+
       // Build and emit result
       const result: CrawlResult = {
         request,
@@ -518,6 +751,7 @@ export class FlowwCrawler extends EventEmitter {
         screenshot: pipelineResult.screenshot,
         markdown: pipelineResult.markdown,
         metadata: pipelineResult.metadata,
+        enrichedDOM: pipelineResult.enrichedDOM,
         processedAt: new Date(),
       }
 
@@ -543,7 +777,7 @@ export class FlowwCrawler extends EventEmitter {
         }))
       }
 
-      // SPA route discovery — DOM inspection (non-destructive)
+      // SPA route discovery
       if (pageData.isSPA || newLinks.length < 3) {
         try {
           const spaRoutes = await discoverRoutesFromDOM(page)
@@ -557,9 +791,10 @@ export class FlowwCrawler extends EventEmitter {
               }))
             }
           }
-        } catch {}
+        } catch {
+          // Non-critical
+        }
 
-        // SPA route discovery — button clicking (destructive, runs after everything else)
         try {
           const clickRoutes = await discoverRoutesByClicking(page, { maxClicks: 10, timeout: 2000 })
           for (const route of clickRoutes) {
@@ -568,11 +803,13 @@ export class FlowwCrawler extends EventEmitter {
                 depth: request.depth + 1,
                 parentUrl: request.url,
                 maxRetries: this.config.maxRetries,
-                priority: 4, // high priority — these are real SPA pages
+                priority: 4,
               }))
             }
           }
-        } catch {}
+        } catch {
+          // Non-critical
+        }
       }
 
       // Hash route discovery
@@ -587,7 +824,9 @@ export class FlowwCrawler extends EventEmitter {
             }))
           }
         }
-      } catch {}
+      } catch {
+        // Non-critical
+      }
 
       // iframe link discovery
       try {
@@ -601,9 +840,11 @@ export class FlowwCrawler extends EventEmitter {
             }))
           }
         }
-      } catch {}
+      } catch {
+        // Non-critical
+      }
 
-      // Form submission discovery (GET forms only)
+      // Form submission discovery
       try {
         const formDiscoveries = await submitGetForms(page, { maxForms: 2 })
         for (const discovery of formDiscoveries) {
@@ -615,43 +856,90 @@ export class FlowwCrawler extends EventEmitter {
             }))
           }
         }
-      } catch {}
+      } catch {
+        // Non-critical
+      }
 
-      // Pagination — detect next page and add to queue
+      // Pagination
       try {
         const pagination = await detectPagination(page)
         if (pagination.nextUrl && !this.visited.has(normalizeUrl(pagination.nextUrl))) {
           await this.queue.add(createRequest(pagination.nextUrl, {
             depth: request.depth,
             parentUrl: request.url,
-            priority: 15, // low priority — content pages first
+            priority: 15,
           }))
         }
-      } catch {}
+      } catch {
+        // Non-critical
+      }
 
-      // hreflang — skip alternate language versions (only crawl primary language)
+      // hreflang
       try {
         const hreflangUrls = await detectHreflangUrls(page)
         for (const alt of hreflangUrls) {
-          // Mark alternate language URLs as visited to prevent crawling duplicates
           this.visited.add(normalizeUrl(alt.url))
         }
-      } catch {}
+      } catch {
+        // Non-critical
+      }
     } finally {
+      if (this.watchdogManager) {
+        await this.watchdogManager.stopAll()
+        this.watchdogManager.clearEvents()
+      }
+      await disposeCDPSession(page)
       this.browserPool.release(browserInstance)
     }
   }
 
-  async pause(): Promise<void> {
-    this.cancelled = true // simplified — pause = stop for now
+  // ─── Private: Checkpoint ───────────────────────────────────────
+
+  private async saveCheckpoint(): Promise<string> {
+    if (!this.checkpointManager || !this.config.checkpointDir) {
+      throw new Error('Checkpoints not enabled')
+    }
+
+    const checkpoint: CrawlCheckpoint = {
+      version: 1,
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      startUrl: this.startUrl,
+      visited: Array.from(this.visited),
+      canonicalUrls: Array.from(this.canonicalUrls.entries()),
+      paginationCount: Array.from(this.paginationCount.entries()),
+      knownAuthCookies: this.knownAuthCookies,
+      stats: this.stats.getSnapshot(),
+      totalErrors: this.totalErrors,
+    }
+
+    // Serialize queue if supported
+    if (this.queue && 'serialize' in this.queue) {
+      checkpoint.queueState = await (this.queue as any).serialize()
+    }
+
+    const id = await this.checkpointManager.save(checkpoint, this.config.checkpointDir)
+    this.successSinceCheckpoint = 0
+    this.emit(CrawlEvent.CHECKPOINT_SAVED, { id, pagesVisited: this.visited.size })
+    return id
   }
 
-  async resume(): Promise<void> {
-    // Would need to re-enter crawl loop — complex, omit for MVP
+  // ─── Private: Utilities ────────────────────────────────────────
+
+  private extractDomain(url: string): string | null {
+    try {
+      return new URL(url).hostname
+    } catch {
+      return null
+    }
   }
 
-  async cancel(): Promise<void> {
-    this.cancelled = true
+  private getEffectiveDelay(domain: string | null): number {
+    let delay = this.config.delayMs
+    if (this.blockDetector && domain) {
+      delay *= this.blockDetector.getDelayMultiplier(domain)
+    }
+    return delay
   }
 
   private delay(ms: number): Promise<void> {

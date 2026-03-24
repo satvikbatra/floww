@@ -1,4 +1,6 @@
 import React, { Component, type ReactNode } from 'react'
+import { AlertTriangle } from 'lucide-react'
+import styles from './ErrorBoundary.module.css'
 
 interface Props {
   children: ReactNode
@@ -29,23 +31,20 @@ export class ErrorBoundary extends Component<Props, State> {
       if (this.props.fallback) return this.props.fallback
 
       return (
-        <div style={{
-          padding: '48px 24px',
-          textAlign: 'center',
-          maxWidth: '500px',
-          margin: '0 auto',
-        }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px', opacity: 0.3 }}>!</div>
-          <h2 style={{ marginBottom: '8px' }}>Something went wrong</h2>
-          <p style={{ opacity: 0.6, marginBottom: '16px' }}>
+        <div className={styles.container}>
+          <div className={styles.iconWrapper}>
+            <AlertTriangle size={28} />
+          </div>
+          <h2 className={styles.title}>Something went wrong</h2>
+          <p className={styles.message}>
             {this.state.error?.message || 'An unexpected error occurred'}
           </p>
           <button
+            className={styles.reloadButton}
             onClick={() => {
               this.setState({ hasError: false, error: null })
               window.location.reload()
             }}
-            className="btn btn-primary"
           >
             Reload Page
           </button>
