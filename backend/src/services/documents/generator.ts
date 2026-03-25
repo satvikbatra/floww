@@ -17,6 +17,7 @@ import { KnowledgeGraph } from '../graph/knowledge-graph'
 import { tryGetLLMClient } from '../ai/llm-client'
 import { db } from '../../db/client'
 import type { PageAnalysisResult } from '../ai/llm-client'
+import { DocPipeline, type PipelinePage } from './doc-pipeline'
 
 export interface DocGenerationOptions {
   projectId: string
@@ -99,18 +100,44 @@ export class DocumentGenerator {
       await this.copyScreenshots(pages, options.projectId, screenshotDir)
     }
 
-    // Generate markdown
-    let markdown = this.buildMarkdown(pages, workflows, stats, options, !!screenshotDir)
+    // Generate markdown — multi-pass pipeline if LLM available, fallback to structural
+    const llm = tryGetLLMClient()
+    let markdown: string
+
+    if (llm) {
+      try {
+        // Build rich page data with all crawl info
+        const pipelinePages = await this.buildPipelinePages(pages, options.projectId)
+        const navEdges = this.getNavigationEdges(graph)
+
+        // Copy screenshots with numbered names for pipeline (./screenshots/1.png, ./screenshots/2.png)
+        if (screenshotDir) {
+          await this.copyScreenshotsNumbered(pipelinePages, screenshotDir)
+        }
+
+        // Run multi-pass pipeline
+        const pipeline = new DocPipeline(llm)
+        const result = await pipeline.run(
+          options.projectName,
+          options.projectUrl,
+          pipelinePages,
+          navEdges,
+        )
+        markdown = result.markdown
+      } catch (error) {
+        console.warn('Pipeline doc generation failed, falling back to structural:', error)
+        markdown = this.buildMarkdown(pages, workflows, stats, options, !!screenshotDir)
+      }
+    } else {
+      markdown = this.buildMarkdown(pages, workflows, stats, options, !!screenshotDir)
+    }
 
     // Translate if needed
-    if (options.language !== 'en') {
-      const llm = tryGetLLMClient()
-      if (llm) {
-        try {
-          markdown = await llm.translate(markdown, options.language)
-        } catch (error) {
-          console.warn('Translation failed, using English:', error)
-        }
+    if (options.language !== 'en' && llm) {
+      try {
+        markdown = await llm.translate(markdown, options.language)
+      } catch (error) {
+        console.warn('Translation failed, using English:', error)
       }
     }
 
@@ -407,6 +434,101 @@ ${htmlBody}
       } catch {
         // Archive dir doesn't exist
       }
+    }
+  }
+
+  /**
+   * Build pipeline page data from crawl archives (HTML + screenshots)
+   */
+  private async buildPipelinePages(
+    pages: PageDocData[],
+    projectId: string
+  ): Promise<PipelinePage[]> {
+    const archivePath = appConfig.storage.archivePath
+    const result: PipelinePage[] = []
+
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i]
+      let headings: string[] = []
+      let forms = 0
+      let buttons: string[] = []
+      let links = 0
+      let screenshotPath: string | undefined
+
+      try {
+        const urlDir = path.join(archivePath, projectId, page.urlHash)
+        const timestamps = await fs.readdir(urlDir)
+        if (timestamps.length > 0) {
+          const latest = timestamps.sort().pop()!
+          const snapshotDir = path.join(urlDir, latest)
+
+          try {
+            const cheerio = await import('cheerio')
+            const html = await fs.readFile(path.join(snapshotDir, 'index.html'), 'utf-8')
+            const $ = cheerio.load(html)
+            headings = $('h1, h2, h3').map((_, el) => $(el).text().trim()).get().filter(Boolean).slice(0, 10)
+            forms = $('form').length
+            buttons = $('button, input[type="submit"], [role="button"]')
+              .map((_, el) => $(el).text().trim())
+              .get()
+              .filter((t: string) => t.length > 0 && t.length < 50)
+              .slice(0, 10)
+            links = $('a[href]').length
+          } catch { /* HTML not available */ }
+
+          try {
+            const ssFile = path.join(snapshotDir, 'screenshot.png')
+            await fs.access(ssFile)
+            screenshotPath = ssFile
+          } catch { /* no screenshot */ }
+        }
+      } catch { /* archive dir not found */ }
+
+      result.push({
+        index: i,
+        url: page.url,
+        title: page.title,
+        urlHash: page.urlHash,
+        headings,
+        forms,
+        buttons,
+        links,
+        screenshotPath,
+      })
+    }
+
+    return result
+  }
+
+  /**
+   * Copy screenshots with numbered filenames (1.png, 2.png, ...) for pipeline output
+   */
+  private async copyScreenshotsNumbered(
+    pages: PipelinePage[],
+    outputDir: string
+  ): Promise<void> {
+    for (const page of pages) {
+      if (!page.screenshotPath) continue
+      try {
+        const dest = path.join(outputDir, `${page.index + 1}.png`)
+        await fs.copyFile(page.screenshotPath, dest)
+      } catch { /* skip */ }
+    }
+  }
+
+  /**
+   * Extract navigation edges from knowledge graph
+   */
+  private getNavigationEdges(graph: KnowledgeGraph): Array<{ from: string; to: string }> {
+    try {
+      const graphData = graph.export()
+      if (!graphData.edges || graphData.edges.length === 0) return []
+
+      return graphData.edges
+        .map((e: any) => ({ from: e.source, to: e.target }))
+        .slice(0, 50)
+    } catch {
+      return []
     }
   }
 

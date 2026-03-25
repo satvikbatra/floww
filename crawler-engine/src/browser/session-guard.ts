@@ -118,3 +118,40 @@ export async function restoreCookies(page: Page, cookies: any[]): Promise<void> 
     await page.context().addCookies(cookies)
   }
 }
+
+/**
+ * Capture full storage state (cookies + localStorage) from a browser context.
+ * Uses Playwright's built-in storageState() API.
+ */
+export async function captureStorageState(page: Page): Promise<any> {
+  return await page.context().storageState()
+}
+
+/**
+ * Apply a previously captured storage state to a browser context.
+ * Restores cookies and localStorage per origin.
+ */
+export async function applyStorageState(page: Page, state: any): Promise<void> {
+  // Apply cookies
+  if (state.cookies?.length > 0) {
+    await page.context().addCookies(state.cookies)
+  }
+
+  // Apply localStorage per origin
+  if (state.origins?.length > 0) {
+    for (const origin of state.origins) {
+      if (origin.localStorage?.length > 0) {
+        try {
+          await page.goto(origin.origin, { waitUntil: 'domcontentloaded', timeout: 10000 })
+          await page.evaluate((items: Array<{ name: string; value: string }>) => {
+            for (const item of items) {
+              localStorage.setItem(item.name, item.value)
+            }
+          }, origin.localStorage)
+        } catch {
+          // Origin may be unreachable — skip localStorage for this origin
+        }
+      }
+    }
+  }
+}

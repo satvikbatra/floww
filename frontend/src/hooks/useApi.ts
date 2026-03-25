@@ -49,6 +49,14 @@ export const getCrawlStatus = (projectId: string, sessionId: string) =>
 export const sendCrawlAction = (projectId: string, sessionId: string, action: string) =>
   api.post(`/projects/${projectId}/crawl/action`, { sessionId, action })
 
+// Session management
+export const getSessionStatus = (projectId: string) =>
+  api.get(`/projects/${projectId}/crawl/session`)
+export const uploadSession = (projectId: string, storageState: any) =>
+  api.post(`/projects/${projectId}/crawl/session`, { storageState })
+export const deleteSession = (projectId: string) =>
+  api.delete(`/projects/${projectId}/crawl/session`)
+
 // Documents
 export const generateDocument = (projectId: string, data: any) =>
   api.post(`/projects/${projectId}/documents`, data)

@@ -32,6 +32,14 @@ const envSchema = z.object({
   // Optional: LLM
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_BASE_URL: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().optional(),
+
+  // Optional: LiteLLM (OpenAI-compatible proxy)
+  LITELLM_API_KEY: z.string().optional(),
+  LITELLM_BASE_URL: z.string().default('https://grid.ai.juspay.net'),
+  LITELLM_MODEL: z.string().default('openai/qwen3-coder-480b'),
+  LITELLM_VISION_MODEL: z.string().default('openai/glm-46-fp8'),
   
   // Optional: Redis
   REDIS_URL: z.string().optional(),
@@ -89,6 +97,12 @@ export const appConfig = {
   llm: {
     openaiKey: env.OPENAI_API_KEY,
     anthropicKey: env.ANTHROPIC_API_KEY,
+    anthropicBaseUrl: env.ANTHROPIC_BASE_URL,
+    anthropicModel: env.ANTHROPIC_MODEL,
+    litellmKey: env.LITELLM_API_KEY,
+    litellmBaseUrl: env.LITELLM_BASE_URL,
+    litellmModel: env.LITELLM_MODEL,
+    litellmVisionModel: env.LITELLM_VISION_MODEL,
   },
   
   redis: {

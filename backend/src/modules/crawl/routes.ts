@@ -233,4 +233,57 @@ crawl.post('/:projectId/crawl/action', requireAuth, async (c) => {
   }
 })
 
+// Get saved session status for a project
+crawl.get('/:projectId/crawl/session', requireAuth, async (c) => {
+  const user = c.get('user')
+  const projectId = c.req.param('projectId')!
+
+  const project = await db.project.findFirst({ where: { id: projectId, ownerId: user.id } })
+  if (!project) {
+    throw new NotFoundError('Project not found')
+  }
+
+  return c.json({
+    hasSession: CrawlerService.hasSession(projectId),
+  })
+})
+
+// Upload storage state for a project (session import)
+crawl.post('/:projectId/crawl/session', requireAuth, async (c) => {
+  const user = c.get('user')
+  const projectId = c.req.param('projectId')!
+
+  const project = await db.project.findFirst({ where: { id: projectId, ownerId: user.id } })
+  if (!project) {
+    throw new NotFoundError('Project not found')
+  }
+
+  const body = await c.req.json()
+  if (!body.storageState || !body.storageState.cookies) {
+    return c.json({ error: 'Invalid storageState: must contain cookies array' }, 400)
+  }
+
+  const fs = await import('fs')
+  const path = await import('path')
+  const sessionPath = path.join('storage', 'sessions', projectId, 'storageState.json')
+  fs.mkdirSync(path.dirname(sessionPath), { recursive: true })
+  fs.writeFileSync(sessionPath, JSON.stringify(body.storageState, null, 2))
+
+  return c.json({ message: 'Session saved', cookieCount: body.storageState.cookies.length })
+})
+
+// Delete saved session for a project
+crawl.delete('/:projectId/crawl/session', requireAuth, async (c) => {
+  const user = c.get('user')
+  const projectId = c.req.param('projectId')!
+
+  const project = await db.project.findFirst({ where: { id: projectId, ownerId: user.id } })
+  if (!project) {
+    throw new NotFoundError('Project not found')
+  }
+
+  const deleted = CrawlerService.deleteSession(projectId)
+  return c.json({ message: deleted ? 'Session deleted' : 'No session found' })
+})
+
 export default crawl

@@ -10,6 +10,9 @@ export const CrawlEvent = {
   STATS_UPDATE: 'stats:update',
   BLOCK_DETECTED: 'block:detected',
   CHECKPOINT_SAVED: 'checkpoint:saved',
+  INTERACTIVE_LOGIN_STARTED: 'interactive:login:started',
+  INTERACTIVE_LOGIN_COMPLETED: 'interactive:login:completed',
+  SESSION_RESTORED: 'session:restored',
 } as const
 
 export type CrawlEventName = typeof CrawlEvent[keyof typeof CrawlEvent]

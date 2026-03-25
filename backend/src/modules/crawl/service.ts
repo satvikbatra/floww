@@ -27,6 +27,8 @@ import {
 import { wsEventManager, CrawlEventType } from '../../services/events/websocket-manager'
 import type { Project } from '@prisma/client'
 import crypto from 'crypto'
+import path from 'path'
+import fs from 'fs'
 
 export class CrawlerService {
   private static activeCrawlers = new Map<
@@ -42,7 +44,43 @@ export class CrawlerService {
     return Array.from(this.activeCrawlers.keys())
   }
 
+  private static getSessionPath(projectId: string): string {
+    return path.join('storage', 'sessions', projectId, 'storageState.json')
+  }
+
+  private static loadSavedSession(projectId: string): any | null {
+    try {
+      const sessionPath = CrawlerService.getSessionPath(projectId)
+      if (fs.existsSync(sessionPath)) {
+        return JSON.parse(fs.readFileSync(sessionPath, 'utf-8'))
+      }
+    } catch {}
+    return null
+  }
+
+  private static saveSession(projectId: string, storageState: any): void {
+    const sessionPath = CrawlerService.getSessionPath(projectId)
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true })
+    fs.writeFileSync(sessionPath, JSON.stringify(storageState, null, 2))
+  }
+
+  static hasSession(projectId: string): boolean {
+    return fs.existsSync(CrawlerService.getSessionPath(projectId))
+  }
+
+  static deleteSession(projectId: string): boolean {
+    const sessionPath = CrawlerService.getSessionPath(projectId)
+    if (fs.existsSync(sessionPath)) {
+      fs.unlinkSync(sessionPath)
+      return true
+    }
+    return false
+  }
+
   async startCrawl(sessionId: string, project: Project, rawConfig: any) {
+    // Load saved session for this project
+    const savedSession = CrawlerService.loadSavedSession(project.id)
+
     const crawler = new FlowwCrawler({
       maxPages: rawConfig.maxPages ?? 500,
       maxDepth: rawConfig.maxDepth ?? 10,
@@ -73,6 +111,10 @@ export class CrawlerService {
       // Checkpoints
       enableCheckpoints: rawConfig.enableCheckpoints ?? false,
       checkpointDir: rawConfig.checkpointDir,
+      // Interactive login
+      enableInteractiveLogin: true,
+      interactiveLoginTimeout: rawConfig.interactionTimeout ?? 300000,
+      storageState: savedSession,
     })
 
     const interactiveHandler = new BrowserInteractiveHandler()
@@ -88,7 +130,7 @@ export class CrawlerService {
       })
     })
 
-    // Hook: handle obstacles (login, captcha, etc.) — inject UI into the crawler's own page
+    // Hook: handle obstacles (login, captcha, etc.)
     crawler.onObstacleDetected(async (ctx: HookContext) => {
       if (!ctx.obstacle) { ctx.skip(); return }
 
@@ -101,12 +143,48 @@ export class CrawlerService {
         timeout: rawConfig.interactionTimeout ?? 300000,
       }
 
-      // Inject UI into the SAME page the crawler is on — no second tab
-      const response = await interactiveHandler.requestInteraction(ctx.page, request)
+      let response
+      if (ctx.obstacle.type === 'oauth') {
+        // OAuth: DON'T inject UI into the page (it's on a third-party domain)
+        // Just notify frontend and wait for user to complete login in the visible browser
+        response = await interactiveHandler.requestOAuthInteraction(request)
+      } else {
+        // Traditional login/captcha/etc: inject UI into the SAME page
+        response = await interactiveHandler.requestInteraction(ctx.page, request)
+      }
 
       if (response.action === 'cancelled') ctx.cancelCrawl()
       else if (response.action === 'skipped') ctx.skip()
-      // 'completed' → crawler continues with the page as-is (user may have logged in)
+      // 'completed' → crawler continues (for login/oauth, engine captures storageState)
+    })
+
+    // Event: interactive login completed → persist session for future crawls
+    crawler.on(CrawlEvent.INTERACTIVE_LOGIN_COMPLETED, async (data: any) => {
+      if (data.storageState) {
+        CrawlerService.saveSession(project.id, data.storageState)
+        await wsEventManager.sendToSession(sessionId, {
+          type: CrawlEventType.CRAWL_PROGRESS,
+          sessionId,
+          timestamp: new Date(),
+          data: { message: 'Login session saved for future crawls' },
+        })
+      }
+    })
+
+    // Event: interactive login started → notify frontend
+    crawler.on(CrawlEvent.INTERACTIVE_LOGIN_STARTED, async (data: any) => {
+      await wsEventManager.sendToSession(sessionId, {
+        type: 'interactive:login:started' as any,
+        sessionId,
+        timestamp: new Date(),
+        data: {
+          pageUrl: data.pageUrl,
+          pageTitle: data.pageTitle,
+          type: data.type,
+          oauthProviders: data.oauthProviders,
+          message: 'Login page detected. Please sign in using the browser window, then click Continue in Floww.',
+        },
+      })
     })
 
     // Event: page crawled → archive + DB + graph
@@ -233,6 +311,7 @@ export class CrawlerService {
 function mapObstacleType(type: string): InteractionType {
   switch (type) {
     case 'login': return InteractionType.LOGIN_FORM
+    case 'oauth': return InteractionType.OAUTH_LOGIN
     case 'captcha': return InteractionType.CAPTCHA
     case '2fa': return InteractionType.TWO_FACTOR
     case 'form': return InteractionType.REQUIRED_FORM

@@ -31,7 +31,7 @@ export const InteractiveCrawlBanner: React.FC<InteractiveCrawlBannerProps> = ({
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
 
-      if (data.type === 'interaction:required' || data.type === 'user:action:requested') {
+      if (data.type === 'interaction:required' || data.type === 'user:action:requested' || data.type === 'interactive:login:started') {
         setIsWaiting(true)
         setMessage(data.data?.message || 'Please complete the action in the browser')
         setPageUrl(data.data?.pageUrl || '')

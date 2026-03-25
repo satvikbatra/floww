@@ -16,6 +16,7 @@
 
 import { EventEmitter } from 'events'
 import crypto from 'crypto'
+import fs from 'fs'
 import { CrawlerConfigSchema, type CrawlerConfig } from './config'
 import type { CrawlRequest, CrawlResult, CrawlSummary } from './types'
 import { CrawlEvent } from './events/event-types'
@@ -30,7 +31,7 @@ import { dismissCookieBanner } from './browser/cookie-banner'
 import { dismissPopups } from './browser/popup-dismisser'
 import { installResourceBlocker } from './browser/resource-blocker'
 import { submitGetForms } from './browser/form-submitter'
-import { checkSessionStatus, detectAuthCookies } from './browser/session-guard'
+import { checkSessionStatus, detectAuthCookies, captureStorageState, applyStorageState } from './browser/session-guard'
 import { handleChallenge, handleMetaRefresh } from './browser/challenge-handler'
 import { extractIframeLinks, detectHashRoutes, extractCanonicalUrl, detectHreflangUrls, detectPagination } from './browser/content-extractor'
 import { RedirectGuard } from './strategy/redirect-guard'
@@ -318,6 +319,41 @@ export class FlowwCrawler extends EventEmitter {
     } else {
       this.watchdogManager = null
     }
+
+    // Restore saved session (storageState) if available
+    const storageState = this.loadStorageState()
+    if (storageState) {
+      try {
+        const instance = await this.browserPool.acquire()
+        const page = await instance.getPage()
+        await applyStorageState(page, storageState)
+        this.browserPool.release(instance)
+        this.emit(CrawlEvent.SESSION_RESTORED, { cookieCount: storageState.cookies?.length ?? 0 })
+      } catch (error) {
+        // Session restore failed — continue without it
+        this.emit(CrawlEvent.CRAWL_ERROR, {
+          error: new Error(`Failed to restore session: ${(error as Error).message}`),
+          fatal: false,
+        })
+      }
+    }
+  }
+
+  private loadStorageState(): any | null {
+    // Inline storageState object takes precedence
+    if (this.config.storageState) {
+      return this.config.storageState
+    }
+    // Load from file
+    if (this.config.storageStatePath) {
+      try {
+        const data = fs.readFileSync(this.config.storageStatePath, 'utf-8')
+        return JSON.parse(data)
+      } catch {
+        return null
+      }
+    }
+    return null
   }
 
   // ─── Private: Concurrent crawl loop ────────────────────────────
@@ -629,14 +665,23 @@ export class FlowwCrawler extends EventEmitter {
         this.redirectGuard.recordRedirect(request.url, finalUrlAfterNav)
       }
 
-      // Start watchdogs
-      if (this.watchdogManager) {
+      // ── Early obstacle detection (BEFORE any automated clicks) ──
+      // Must run before cookie/popup dismissal, which can accidentally
+      // click login buttons or trigger OAuth redirects on auth pages.
+      const obstacle = await detectObstacle(page, request.url)
+      const isLoginPage = obstacle && (obstacle.type === 'login' || obstacle.type === 'oauth')
+
+      // Start watchdogs (skip on login pages — no need)
+      if (this.watchdogManager && !isLoginPage) {
         await this.watchdogManager.startAll(page)
       }
 
-      // Dismiss cookie banners and popups
-      await dismissCookieBanner(page)
-      await dismissPopups(page)
+      // Dismiss cookie banners and popups — SKIP on login pages
+      // to avoid accidentally clicking auth buttons
+      if (!isLoginPage) {
+        await dismissCookieBanner(page)
+        await dismissPopups(page)
+      }
 
       // Session validity check
       if (this.knownAuthCookies.length > 0) {
@@ -683,10 +728,54 @@ export class FlowwCrawler extends EventEmitter {
         return
       }
 
-      // Obstacle detection
-      const obstacle = await detectObstacle(page, request.url)
+      // Process the obstacle detected earlier
       if (obstacle) {
-        if (this.hookManager.has('obstacleDetected')) {
+        const isLoginObstacle = obstacle.type === 'login' || obstacle.type === 'oauth'
+
+        if (isLoginObstacle && this.config.enableInteractiveLogin) {
+          // Interactive login flow: emit event, run hook (backend waits for user), capture session
+          this.emit(CrawlEvent.INTERACTIVE_LOGIN_STARTED, {
+            pageUrl: obstacle.pageUrl,
+            pageTitle: obstacle.pageTitle,
+            type: obstacle.type,
+            oauthProviders: obstacle.oauthProviders,
+          })
+
+          if (this.hookManager.has('obstacleDetected')) {
+            const obsCtx = HookManager.createContext(request, page)
+            obsCtx.obstacle = obstacle
+            await this.hookManager.execute('obstacleDetected', obsCtx)
+
+            if (obsCtx.aborted || obsCtx.skipped) {
+              this.visited.add(normalizeUrl(request.url))
+              this.stats.recordSkip()
+              return
+            }
+            if (obsCtx.cancelled) { this.cancelled = true; return }
+
+            // User completed login — capture session state for persistence
+            try {
+              const storageState = await captureStorageState(page)
+              this.emit(CrawlEvent.INTERACTIVE_LOGIN_COMPLETED, { storageState })
+              this.knownAuthCookies = await detectAuthCookies(page)
+            } catch {
+              // Storage state capture failed — continue anyway
+            }
+
+            // Re-navigate to the original URL (user may have been redirected during login)
+            await navigateAndWait(page, request.url, {
+              timeout: this.config.navigationTimeout,
+              retries: 0,
+            })
+          } else {
+            // No hook registered — just emit and skip
+            this.emit(CrawlEvent.INTERACTION_NEEDED, obstacle)
+            this.visited.add(normalizeUrl(request.url))
+            this.stats.recordSkip()
+            return
+          }
+        } else if (this.hookManager.has('obstacleDetected')) {
+          // Non-login obstacles or interactive login disabled — existing flow
           const obsCtx = HookManager.createContext(request, page)
           obsCtx.obstacle = obstacle
           await this.hookManager.execute('obstacleDetected', obsCtx)

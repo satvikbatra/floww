@@ -69,10 +69,11 @@ export interface CrawlStatisticsSnapshot {
 }
 
 export interface ObstacleInfo {
-  type: 'login' | 'captcha' | 'blocked' | '2fa' | 'form' | 'unknown'
+  type: 'login' | 'oauth' | 'captcha' | 'blocked' | '2fa' | 'form' | 'unknown'
   pageUrl: string
   pageTitle: string
   message: string
+  oauthProviders?: string[]
 }
 
 // ── Enriched DOM (browser-use inspired) ─────────────────────────

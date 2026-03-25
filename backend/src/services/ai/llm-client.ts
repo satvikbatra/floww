@@ -39,6 +39,7 @@ export type WorkflowResult = z.infer<typeof WorkflowResultSchema>;
 export interface BaseLLMClient {
   analyzeScreenshot(imagePath: string, prompt: string): Promise<Record<string, any>>;
   generateText(prompt: string): Promise<string>;
+  generateTextWithImages(prompt: string, imagePaths: string[]): Promise<string>;
   generateStructured<T>(prompt: string, schema: z.ZodSchema<T>): Promise<T>;
 }
 
@@ -89,6 +90,24 @@ export class OpenAIClient implements BaseLLMClient {
     return response.choices[0]?.message?.content || '';
   }
 
+  async generateTextWithImages(prompt: string, imagePaths: string[]): Promise<string> {
+    const content: Array<any> = [{ type: 'text', text: prompt }];
+    for (const imgPath of imagePaths) {
+      try {
+        const base64 = this.encodeImage(imgPath);
+        content.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } });
+      } catch { /* skip unreadable */ }
+    }
+
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      messages: [{ role: 'user', content }],
+      max_tokens: 16000,
+    });
+
+    return response.choices[0]?.message?.content || '';
+  }
+
   async generateStructured<T>(prompt: string, schema: z.ZodSchema<T>): Promise<T> {
     const response = await this.client.chat.completions.create({
       model: this.model,
@@ -127,10 +146,14 @@ export class OpenAIClient implements BaseLLMClient {
  */
 export class AnthropicClient implements BaseLLMClient {
   private client: Anthropic;
-  private model = 'claude-sonnet-4-20250514';
+  private model: string;
 
-  constructor(apiKey: string) {
-    this.client = new Anthropic({ apiKey });
+  constructor(apiKey: string, baseURL?: string, model?: string) {
+    this.client = new Anthropic({
+      apiKey,
+      ...(baseURL ? { baseURL } : {}),
+    });
+    this.model = model || 'claude-sonnet-4-20250514';
   }
 
   async analyzeScreenshot(imagePath: string, prompt: string): Promise<Record<string, any>> {
@@ -166,8 +189,29 @@ export class AnthropicClient implements BaseLLMClient {
   async generateText(prompt: string): Promise<string> {
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 2000,
+      max_tokens: 16000,
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    return response.content[0]?.type === 'text' ? response.content[0].text : '';
+  }
+
+  async generateTextWithImages(prompt: string, imagePaths: string[]): Promise<string> {
+    const content: Array<any> = [{ type: 'text', text: prompt }];
+    for (const imgPath of imagePaths) {
+      try {
+        const base64 = this.encodeImage(imgPath);
+        content.push({
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png' as const, data: base64 },
+        });
+      } catch { /* skip unreadable */ }
+    }
+
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 16000,
+      messages: [{ role: 'user', content }],
     });
 
     return response.content[0]?.type === 'text' ? response.content[0].text : '';
@@ -206,6 +250,110 @@ export class AnthropicClient implements BaseLLMClient {
 }
 
 /**
+ * LiteLLM Client — Uses OpenAI-compatible API with custom base URL
+ * Works with any LiteLLM proxy (e.g., grid.ai.juspay.net)
+ */
+export class LiteLLMClient implements BaseLLMClient {
+  private client: OpenAI;
+  private model: string;
+  private visionModel: string;
+
+  constructor(apiKey: string, baseUrl: string, model: string, visionModel: string) {
+    this.client = new OpenAI({
+      apiKey,
+      baseURL: baseUrl.replace(/\/$/, '') + '/v1',
+    });
+    this.model = model;
+    this.visionModel = visionModel;
+  }
+
+  async analyzeScreenshot(imagePath: string, prompt: string): Promise<Record<string, any>> {
+    const imageData = this.encodeImage(imagePath);
+
+    const response = await this.client.chat.completions.create({
+      model: this.visionModel,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${imageData}`,
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 2000,
+    });
+
+    const content = response.choices[0]?.message?.content || '{}';
+    return this.parseJsonResponse(content);
+  }
+
+  async generateText(prompt: string): Promise<string> {
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 16000,
+    });
+
+    return response.choices[0]?.message?.content || '';
+  }
+
+  async generateTextWithImages(prompt: string, imagePaths: string[]): Promise<string> {
+    const content: Array<any> = [{ type: 'text', text: prompt }];
+    for (const imgPath of imagePaths) {
+      try {
+        const base64 = this.encodeImage(imgPath);
+        content.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } });
+      } catch { /* skip */ }
+    }
+
+    const response = await this.client.chat.completions.create({
+      model: this.visionModel,
+      messages: [{ role: 'user', content }],
+      max_tokens: 16000,
+    });
+
+    return response.choices[0]?.message?.content || '';
+  }
+
+  async generateStructured<T>(prompt: string, schema: z.ZodSchema<T>): Promise<T> {
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      messages: [{ role: 'user', content: prompt + '\n\nRespond ONLY with valid JSON.' }],
+      max_tokens: 2000,
+    });
+
+    const content = response.choices[0]?.message?.content || '{}';
+    const data = this.parseJsonResponse(content);
+    return schema.parse(data);
+  }
+
+  private encodeImage(imagePath: string): string {
+    const imageBuffer = readFileSync(imagePath);
+    return imageBuffer.toString('base64');
+  }
+
+  private parseJsonResponse(content: string): Record<string, any> {
+    try {
+      const startIdx = content.indexOf('{');
+      const endIdx = content.lastIndexOf('}');
+      if (startIdx === -1 || endIdx === -1) {
+        return { raw_response: content };
+      }
+      const jsonStr = content.slice(startIdx, endIdx + 1);
+      return JSON.parse(jsonStr);
+    } catch (error) {
+      return { raw_response: content };
+    }
+  }
+}
+
+/**
  * Main LLM Client with provider abstraction
  */
 export class LLMClient {
@@ -218,16 +366,24 @@ export class LLMClient {
   }
 
   private detectProvider(): string {
+    if (env.LITELLM_API_KEY) return 'litellm';
     if (env.OPENAI_API_KEY) return 'openai';
     if (env.ANTHROPIC_API_KEY) return 'anthropic';
-    throw new Error('No LLM provider configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY');
+    throw new Error('No LLM provider configured. Set LITELLM_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY');
   }
 
   private createClient(): BaseLLMClient {
-    if (this.provider === 'openai' && env.OPENAI_API_KEY) {
+    if (this.provider === 'litellm' && env.LITELLM_API_KEY) {
+      return new LiteLLMClient(
+        env.LITELLM_API_KEY,
+        env.LITELLM_BASE_URL!,
+        env.LITELLM_MODEL!,
+        env.LITELLM_VISION_MODEL!,
+      );
+    } else if (this.provider === 'openai' && env.OPENAI_API_KEY) {
       return new OpenAIClient(env.OPENAI_API_KEY);
     } else if (this.provider === 'anthropic' && env.ANTHROPIC_API_KEY) {
-      return new AnthropicClient(env.ANTHROPIC_API_KEY);
+      return new AnthropicClient(env.ANTHROPIC_API_KEY, env.ANTHROPIC_BASE_URL, env.ANTHROPIC_MODEL);
     }
     throw new Error(`Invalid provider: ${this.provider}`);
   }
@@ -280,6 +436,93 @@ ${text}
     workflows: WorkflowResult[]
   ): Promise<string> {
     const prompt = this.buildDocumentationPrompt(pages, workflows);
+    return this.client.generateText(prompt);
+  }
+
+  /**
+   * Generate comprehensive documentation from crawl data with screenshots.
+   * Sends all page data + up to 10 screenshots to the LLM in a single call.
+   */
+  async generateDocumentationFromCrawl(
+    projectName: string,
+    projectUrl: string,
+    pages: Array<{
+      url: string;
+      title: string;
+      headings: string[];
+      forms: number;
+      buttons: string[];
+      links: number;
+      screenshotPath?: string;
+    }>,
+    navigationEdges: Array<{ from: string; to: string }>,
+    workflows: Array<{ name: string; description: string; steps: Array<{ page: string; action: string }> }>,
+  ): Promise<string> {
+    // Build page context
+    const pageDescriptions = pages.map((p, i) => {
+      const parts = [
+        `Page ${i + 1}: ${p.title || 'Untitled'}`,
+        `  URL: ${p.url}`,
+      ];
+      if (p.headings.length > 0) parts.push(`  Sections: ${p.headings.join(', ')}`);
+      if (p.forms > 0) parts.push(`  Forms: ${p.forms}`);
+      if (p.buttons.length > 0) parts.push(`  Buttons: ${p.buttons.slice(0, 8).join(', ')}`);
+      parts.push(`  Links: ${p.links}`);
+      if (p.screenshotPath) parts.push(`  [Screenshot attached]`);
+      return parts.join('\n');
+    }).join('\n\n');
+
+    // Build navigation context
+    const navContext = navigationEdges.length > 0
+      ? navigationEdges.slice(0, 30).map(e => `${e.from} → ${e.to}`).join('\n')
+      : 'No navigation data available.';
+
+    // Build workflow context
+    const workflowContext = workflows.length > 0
+      ? workflows.map(w => `${w.name}: ${w.steps.map(s => s.action).join(' → ')}`).join('\n')
+      : 'No workflows detected.';
+
+    const prompt = `You are a senior technical writer creating end-user documentation for a web application called "${projectName}" (${projectUrl}).
+
+You have been given data from an automated crawl of this application, including page metadata and screenshots of each page.
+
+APPLICATION PAGES:
+${pageDescriptions}
+
+NAVIGATION FLOW (which pages link to which):
+${navContext}
+
+DETECTED USER WORKFLOWS:
+${workflowContext}
+
+TASK:
+Write comprehensive, professional end-user documentation in Markdown format. This should read like documentation from a top SaaS company.
+
+REQUIREMENTS:
+1. Start with a clear overview of what the application does (infer from the pages and screenshots)
+2. Group related pages into logical sections (e.g., "Communication", "Analytics", "Settings") — do NOT just list pages one by one
+3. For each section, write actual how-to instructions that a new user can follow
+4. Reference the screenshots using this format: ![Description](./screenshots/PAGE_INDEX.png) where PAGE_INDEX is the page number (1-based)
+5. Include a "Getting Started" section for new users
+6. Include a navigation guide showing how to move between sections
+7. Write in clear, concise language — no filler text
+8. Use proper Markdown: headers, bullet points, numbered steps, tables where appropriate
+9. Do NOT include a statistics section or metadata dump
+10. Do NOT say "auto-generated" — write as if a human technical writer created this
+
+OUTPUT: Return ONLY the Markdown documentation. No preamble, no "here is the documentation" — just the documentation itself.`;
+
+    // Collect screenshots for vision
+    const screenshotPages = pages.filter(p => p.screenshotPath);
+    const selectedScreenshots = screenshotPages.slice(0, 10);
+    const imagePaths = selectedScreenshots
+      .map(p => p.screenshotPath!)
+      .filter(Boolean);
+
+    if (imagePaths.length > 0) {
+      return this.client.generateTextWithImages(prompt, imagePaths);
+    }
+
     return this.client.generateText(prompt);
   }
 
@@ -422,14 +665,26 @@ Be concise but thorough.`;
   }
 }
 
-// Singleton instance
+// Singleton instance — recreated if env changes
 let llmClientInstance: LLMClient | null = null;
+let llmClientEnvHash: string | null = null;
+
+function getLLMEnvHash(): string {
+  return `${env.ANTHROPIC_API_KEY}|${env.ANTHROPIC_BASE_URL}|${env.ANTHROPIC_MODEL}|${env.OPENAI_API_KEY}|${env.LITELLM_API_KEY}|${env.LITELLM_BASE_URL}`;
+}
 
 export function getLLMClient(provider?: string): LLMClient {
-  if (!llmClientInstance) {
+  const currentHash = getLLMEnvHash();
+  if (!llmClientInstance || llmClientEnvHash !== currentHash) {
     llmClientInstance = new LLMClient(provider);
+    llmClientEnvHash = currentHash;
   }
   return llmClientInstance;
+}
+
+export function resetLLMClient(): void {
+  llmClientInstance = null;
+  llmClientEnvHash = null;
 }
 
 /**
@@ -437,7 +692,7 @@ export function getLLMClient(provider?: string): LLMClient {
  */
 export function tryGetLLMClient(provider?: string): LLMClient | null {
   try {
-    if (!env.OPENAI_API_KEY && !env.ANTHROPIC_API_KEY) return null;
+    if (!env.OPENAI_API_KEY && !env.ANTHROPIC_API_KEY && !env.LITELLM_API_KEY) return null;
     return getLLMClient(provider);
   } catch {
     return null;

@@ -34,15 +34,18 @@ export class AnalysisService {
    */
   async analyzeSession(projectId: string, crawlSessionId?: string): Promise<void> {
     // Find snapshots to analyze
-    const where: any = { projectId, analysisJson: null }
+    const where: any = { projectId }
     if (crawlSessionId) {
       where.crawlSessionId = crawlSessionId
     }
 
-    const snapshots = await db.snapshot.findMany({
+    const allSnapshots = await db.snapshot.findMany({
       where,
       orderBy: { capturedAt: 'asc' },
     })
+
+    // Filter to only snapshots without analysis (avoids Prisma Json null filter issue)
+    const snapshots = allSnapshots.filter(s => s.analysisJson === null || s.analysisJson === undefined)
 
     if (snapshots.length === 0) {
       activeAnalysis.set(projectId, {

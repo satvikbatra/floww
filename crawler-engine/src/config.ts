@@ -72,6 +72,12 @@ export const CrawlerConfigSchema = z.object({
   cookies: z.array(z.any()).optional(),
   userAgent: z.string().optional(),
 
+  // Interactive login
+  enableInteractiveLogin: z.boolean().default(false),
+  interactiveLoginTimeout: z.number().default(300000), // 5 minutes
+  storageStatePath: z.string().optional(),
+  storageState: z.any().optional(),
+
   // Enriched DOM (browser-use inspired CDP features)
   enableEnrichedDOM: z.boolean().default(false),
   enrichedDOMOptions: z.object({

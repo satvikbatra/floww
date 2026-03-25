@@ -13,6 +13,7 @@ import { EventEmitter } from 'events'
 
 export enum InteractionType {
   LOGIN_FORM = 'login_form',
+  OAUTH_LOGIN = 'oauth_login',
   REQUIRED_FORM = 'required_form',
   CAPTCHA = 'captcha',
   TWO_FACTOR = 'two_factor',
@@ -167,6 +168,52 @@ export class BrowserInteractiveHandler extends EventEmitter {
       success: false,
       action: 'cancelled',
     })
+  }
+
+  /**
+   * Request OAuth interaction — does NOT inject UI into the page.
+   * OAuth pages are on third-party domains where we can't inject.
+   * Only emits event and waits for external resolution.
+   */
+  async requestOAuthInteraction(request: InteractionRequest): Promise<InteractionResponse> {
+    if (this.isWaitingForUser) {
+      throw new Error('Already waiting for user interaction')
+    }
+
+    this.isWaitingForUser = true
+    this.currentRequest = request
+
+    this.emit('interaction:required', request)
+
+    try {
+      const timeout = request.timeout ?? 300000
+      const response = await Promise.race([
+        new Promise<InteractionResponse>((resolve) => {
+          this.resolveUserResponse = resolve
+        }),
+        new Promise<InteractionResponse>((resolve) => {
+          const timer = setTimeout(() => {
+            resolve({
+              requestId: request.id,
+              success: false,
+              action: 'cancelled',
+            })
+          }, timeout)
+          this.cleanupFns.push(() => clearTimeout(timer))
+        }),
+      ])
+
+      this.emit('interaction:completed', response)
+      return response
+    } finally {
+      this.isWaitingForUser = false
+      this.currentRequest = null
+      this.resolveUserResponse = null
+      for (const fn of this.cleanupFns) {
+        try { fn() } catch {}
+      }
+      this.cleanupFns = []
+    }
   }
 
   isWaiting(): boolean {
